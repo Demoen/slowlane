@@ -93,3 +93,6 @@ Thumbs.db
 playwright-report/
 playwright/.cache/
 
+
+# MkDocs
+site/

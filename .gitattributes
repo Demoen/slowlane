@@ -20,3 +20,17 @@
 *.PDF    diff=astextplain
 *.rtf    diff=astextplain
 *.RTF    diff=astextplain
+
+# Python
+*.py     text diff=python
+*.pyw    text diff=python
+
+# Web
+*.html   text
+*.css    text
+*.js     text
+*.json   text
+*.md     text
+*.toml   text
+*.yml    text
+*.yaml   text
