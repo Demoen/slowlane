@@ -7,6 +7,8 @@
 
 Production-grade Python CLI tool for Apple service automation. A fastlane-compatible solution for authentication and App Store Connect/Developer Portal operations.
 
+**📚 [Read the full documentation](https://demoen.github.io/slowlane/)**
+
 ## Features
 
 - 🔐 **Multiple auth modes**: JWT API keys, session cookies, interactive login
