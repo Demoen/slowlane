@@ -6,8 +6,8 @@
 
 *Production-grade Python CLI tool for Apple service automation. A chill, fastlane-compatible solution for authentication and App Store Connect/Developer Portal operations.*
 
-> [!TIP]
-> Why rush? Slowlane gets you there... eventually. (Actually it's quite fast, but we like to take our time with quality).
+!!! tip
+    Why rush? Slowlane gets you there... eventually. (Actually it's quite fast, but we like to take our time with quality).
 
 [![CI](https://github.com/Demoen/slowlane/actions/workflows/ci.yml/badge.svg)](https://github.com/Demoen/slowlane/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)

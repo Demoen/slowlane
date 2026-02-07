@@ -70,10 +70,7 @@ nav:
     - developer_portal:
       - Certificates: usage/certificates.md
       - Profiles: usage/profiles.md
-  - Guides:
-    - CI Recipes: ci-recipes.md
-    - Security: security.md
-    - Troubleshooting: troubleshooting.md
+
   - Reference:
     - Configuration: configuration.md
     - CLI Reference: cli.md
