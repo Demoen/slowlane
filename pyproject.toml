@@ -12,7 +12,7 @@ slowlane = "slowlane.cli.main:app"
 
 [tool.poetry.dependencies]
 python = "^3.11"
-typer = ">=0.21.1,<0.24.0"
+typer = ">=0.21.1,<0.25.0"
 click = "^8.3.1"
 httpx = "^0.28.1"
 keyring = "^25.7.0"
