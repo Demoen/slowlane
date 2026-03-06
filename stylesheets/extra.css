@@ -1,0 +1,44 @@
+/* Slowlane Custom CSS */
+
+:root {
+  --md-primary-fg-color:        #009688; /* Teal 500 */
+  --md-primary-fg-color--light: #4db6ac; /* Teal 300 */
+  --md-primary-fg-color--dark:  #00796b; /* Teal 700 */
+  --md-accent-fg-color:         #cddc39; /* Lime 500 */
+}
+
+/* Snail Logo Animation */
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+    transition: transform 3s ease-in-out;
+}
+
+.md-header__button.md-logo:hover img,
+.md-header__button.md-logo:hover svg {
+    transform: translateX(10px); /* Move slowly to the right */
+}
+
+/* Slow transition for links */
+a {
+    transition: color 0.5s ease;
+}
+
+/* Hero Section on Home */
+.hero-snail {
+    font-size: 5rem;
+    display: block;
+    margin-bottom: 0rem;
+    animation: snail-crawl 20s linear infinite;
+}
+
+@keyframes snail-crawl {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+/* Blockquotes with a relaxed vibe */
+blockquote {
+    border-left: 4px solid var(--md-accent-fg-color);
+    background-color: rgba(205, 220, 57, 0.1); /* Light lime bg */
+    border-radius: 0 8px 8px 0;
+}
