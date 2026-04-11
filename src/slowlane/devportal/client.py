@@ -42,9 +42,7 @@ class DeveloperPortalClient(BaseAppleClient):
             raise DeveloperPortalError("No development teams found")
 
         if len(teams) > 1:
-            team_list = ", ".join(
-                f"{t['teamId']} ({t.get('name', '?')})" for t in teams
-            )
+            team_list = ", ".join(f"{t['teamId']} ({t.get('name', '?')})" for t in teams)
             raise DeveloperPortalError(
                 f"Multiple teams found: {team_list}. "
                 "Use --team-id or set [devportal] team_id in config."

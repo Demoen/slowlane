@@ -77,7 +77,9 @@ def certs_list(
         "-t",
         help="Certificate type: development, distribution, etc.",
     ),
-    team_id: str | None = typer.Option(None, "--team-id", help="Team ID (required for multiple teams)"),
+    team_id: str | None = typer.Option(
+        None, "--team-id", help="Team ID (required for multiple teams)"
+    ),
 ) -> None:
     """List signing certificates."""
     console = get_console(ctx)
@@ -88,7 +90,9 @@ def certs_list(
     try:
         with (
             console.status("[bold blue]Fetching certificates...[/bold blue]"),
-            DeveloperPortalClient(session_auth=session, config=config, team_id=effective_team_id) as client,
+            DeveloperPortalClient(
+                session_auth=session, config=config, team_id=effective_team_id
+            ) as client,
         ):
             certs = client.list_certificates(cert_type=cert_type)
     except SlowlaneError as e:
@@ -136,7 +140,9 @@ def certs_create(
         "--csr",
         help="Path to CSR file (auto-generated if not provided)",
     ),
-    team_id: str | None = typer.Option(None, "--team-id", help="Team ID (required for multiple teams)"),
+    team_id: str | None = typer.Option(
+        None, "--team-id", help="Team ID (required for multiple teams)"
+    ),
 ) -> None:
     """Create a new signing certificate."""
     console = get_console(ctx)
@@ -165,7 +171,9 @@ def certs_create(
     try:
         with (
             console.status("[bold blue]Creating certificate...[/bold blue]"),
-            DeveloperPortalClient(session_auth=session, config=config, team_id=effective_team_id) as client,
+            DeveloperPortalClient(
+                session_auth=session, config=config, team_id=effective_team_id
+            ) as client,
         ):
             cert = client.create_certificate(csr_content=csr_content, cert_type=cert_type)
     except SlowlaneError as e:
@@ -180,7 +188,9 @@ def certs_revoke(
     ctx: typer.Context,
     cert_id: str = typer.Argument(..., help="Certificate ID to revoke"),
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
-    team_id: str | None = typer.Option(None, "--team-id", help="Team ID (required for multiple teams)"),
+    team_id: str | None = typer.Option(
+        None, "--team-id", help="Team ID (required for multiple teams)"
+    ),
 ) -> None:
     """Revoke a signing certificate.
 
@@ -210,7 +220,9 @@ def certs_revoke(
     try:
         with (
             console.status("[bold blue]Revoking certificate...[/bold blue]"),
-            DeveloperPortalClient(session_auth=session, config=config, team_id=effective_team_id) as client,
+            DeveloperPortalClient(
+                session_auth=session, config=config, team_id=effective_team_id
+            ) as client,
         ):
             client.revoke_certificate(cert_id)
     except SlowlaneError as e:
@@ -236,7 +248,9 @@ def profiles_list(
         "-a",
         help="Filter by bundle ID",
     ),
-    team_id: str | None = typer.Option(None, "--team-id", help="Team ID (required for multiple teams)"),
+    team_id: str | None = typer.Option(
+        None, "--team-id", help="Team ID (required for multiple teams)"
+    ),
 ) -> None:
     """List provisioning profiles."""
     console = get_console(ctx)
@@ -247,7 +261,9 @@ def profiles_list(
     try:
         with (
             console.status("[bold blue]Fetching profiles...[/bold blue]"),
-            DeveloperPortalClient(session_auth=session, config=config, team_id=effective_team_id) as client,
+            DeveloperPortalClient(
+                session_auth=session, config=config, team_id=effective_team_id
+            ) as client,
         ):
             profiles = client.list_profiles(profile_type=profile_type)
     except SlowlaneError as e:
@@ -301,7 +317,9 @@ def profiles_create(
         "-c",
         help="Certificate ID (auto-select if not provided)",
     ),
-    team_id: str | None = typer.Option(None, "--team-id", help="Team ID (required for multiple teams)"),
+    team_id: str | None = typer.Option(
+        None, "--team-id", help="Team ID (required for multiple teams)"
+    ),
 ) -> None:
     """Create a new provisioning profile."""
     console = get_console(ctx)
@@ -312,24 +330,26 @@ def profiles_create(
     try:
         with (
             console.status("[bold blue]Creating profile...[/bold blue]"),
-            DeveloperPortalClient(session_auth=session, config=config, team_id=effective_team_id) as client,
+            DeveloperPortalClient(
+                session_auth=session, config=config, team_id=effective_team_id
+            ) as client,
         ):
-                if cert_id:
-                    certificate_ids = [cert_id]
-                else:
-                    certs = client.list_certificates()
-                    if not certs:
-                        console.print("[red]No certificates found to include in profile.[/red]")
-                        raise typer.Exit(code=1)
-                    certificate_ids = [certs[0]["certificateId"]]
-                    console.print(f"[dim]Auto-selected certificate: {certificate_ids[0]}[/dim]")
+            if cert_id:
+                certificate_ids = [cert_id]
+            else:
+                certs = client.list_certificates()
+                if not certs:
+                    console.print("[red]No certificates found to include in profile.[/red]")
+                    raise typer.Exit(code=1)
+                certificate_ids = [certs[0]["certificateId"]]
+                console.print(f"[dim]Auto-selected certificate: {certificate_ids[0]}[/dim]")
 
-                profile = client.create_profile(
-                    name=name,
-                    bundle_id=bundle_id,
-                    profile_type=profile_type,
-                    certificate_ids=certificate_ids,
-                )
+            profile = client.create_profile(
+                name=name,
+                bundle_id=bundle_id,
+                profile_type=profile_type,
+                certificate_ids=certificate_ids,
+            )
     except SlowlaneError as e:
         _handle_error(console, e)
         return
@@ -342,7 +362,9 @@ def profiles_delete(
     ctx: typer.Context,
     profile_id: str = typer.Argument(..., help="Profile ID to delete"),
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
-    team_id: str | None = typer.Option(None, "--team-id", help="Team ID (required for multiple teams)"),
+    team_id: str | None = typer.Option(
+        None, "--team-id", help="Team ID (required for multiple teams)"
+    ),
 ) -> None:
     """Delete a provisioning profile."""
     console = get_console(ctx)
@@ -358,7 +380,9 @@ def profiles_delete(
     try:
         with (
             console.status("[bold blue]Deleting profile...[/bold blue]"),
-            DeveloperPortalClient(session_auth=session, config=config, team_id=effective_team_id) as client,
+            DeveloperPortalClient(
+                session_auth=session, config=config, team_id=effective_team_id
+            ) as client,
         ):
             client.delete_profile(profile_id)
     except SlowlaneError as e:

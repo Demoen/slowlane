@@ -144,9 +144,11 @@ class SlowlaneConfig:
                 "format": self.output.format,
                 "verbose": self.output.verbose,
             },
-            "devportal": _filter_none({
-                "team_id": self.devportal.team_id,
-            }),
+            "devportal": _filter_none(
+                {
+                    "team_id": self.devportal.team_id,
+                }
+            ),
         }
 
     def save(self, path: Path | None = None) -> None:
