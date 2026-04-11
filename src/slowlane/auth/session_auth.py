@@ -90,9 +90,7 @@ class SessionAuth:
     @property
     def is_stale(self) -> bool:
         """Check if session is stale and should be refreshed."""
-        age = datetime.now(UTC) - self._session_data.created_at.replace(
-            tzinfo=UTC
-        )
+        age = datetime.now(UTC) - self._session_data.created_at.replace(tzinfo=UTC)
         return age.days >= self.STALE_THRESHOLD_DAYS
 
     def validate(self) -> bool:
@@ -128,9 +126,9 @@ def get_session_auth(
 
     # Try secret store
     if email and secret_store:
-        session_data = secret_store.retrieve_session(email)
-        if session_data:
-            return SessionAuth(session_data)
+        stored = secret_store.retrieve_session(email)
+        if stored:
+            return SessionAuth(stored)
 
     return None
 

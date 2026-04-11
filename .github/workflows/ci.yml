@@ -81,10 +81,10 @@ jobs:
         run: poetry run ruff check src/ --ignore B008
 
       - name: Run ruff formatting check
-        run: poetry run ruff format src/ --check || true
+        run: poetry run ruff format src/ --check
 
       - name: Run mypy type checking
-        run: poetry run mypy src/slowlane --ignore-missing-imports || true
+        run: poetry run mypy src/slowlane --ignore-missing-imports
 
   coverage:
     name: Coverage Report

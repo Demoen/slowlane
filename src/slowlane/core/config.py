@@ -110,16 +110,19 @@ class SlowlaneConfig:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert config to dictionary (excludes None values for TOML compatibility)."""
+
         def _filter_none(d: dict[str, Any]) -> dict[str, Any]:
             return {k: v for k, v in d.items() if v is not None}
 
         return {
-            "auth": _filter_none({
-                "default_mode": self.auth.default_mode,
-                "key_id": self.auth.key_id,
-                "issuer_id": self.auth.issuer_id,
-                "private_key_path": self.auth.private_key_path,
-            }),
+            "auth": _filter_none(
+                {
+                    "default_mode": self.auth.default_mode,
+                    "key_id": self.auth.key_id,
+                    "issuer_id": self.auth.issuer_id,
+                    "private_key_path": self.auth.private_key_path,
+                }
+            ),
             "http": {
                 "timeout": self.http.timeout,
                 "max_retries": self.http.max_retries,

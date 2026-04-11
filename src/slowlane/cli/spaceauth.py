@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -24,14 +26,14 @@ def get_console(ctx: typer.Context) -> Console:
     """Get console from context."""
     if ctx.obj is None:
         return Console()
-    return ctx.obj.get("console", Console())
+    return cast(Console, ctx.obj.get("console", Console()))
 
 
 def get_config(ctx: typer.Context) -> SlowlaneConfig:
     """Get config from context."""
     if ctx.obj is None:
         return SlowlaneConfig.load()
-    return ctx.obj.get("config", SlowlaneConfig.load())
+    return cast(SlowlaneConfig, ctx.obj.get("config", SlowlaneConfig.load()))
 
 
 @app.command()
@@ -82,9 +84,7 @@ def login(
         # Validate cookies
         missing = validate_session_cookies(session_data.cookies)
         if missing:
-            console.print(
-                f"[yellow]Warning:[/yellow] Missing cookies: {', '.join(missing)}"
-            )
+            console.print(f"[yellow]Warning:[/yellow] Missing cookies: {', '.join(missing)}")
 
         # Store session
         if email:
@@ -179,14 +179,25 @@ def verify(
         raise typer.Exit(code=2)
 
     if session_auth.is_stale:
-        console.print(
-            "[yellow]Warning:[/yellow] Session is older than 7 days and may be expired"
-        )
+        console.print("[yellow]Warning:[/yellow] Session is older than 7 days and may be expired")
 
-    # TODO: Make actual API request to verify
-    console.print("[green]✓[/green] Session appears valid (basic check)")
-    console.print(f"  Created: {session_auth.created_at}")
-    console.print(f"  Cookies: {len(session_auth.cookies)}")
+    from slowlane.core.errors import AuthExpiredError, SlowlaneError
+    from slowlane.devportal.client import DeveloperPortalClient
+
+    try:
+        with DeveloperPortalClient(session_auth=session_auth) as client:
+            teams = client.list_teams()
+        console.print("[green]✓[/green] Session is valid")
+        console.print(f"  Created: {session_auth.created_at}")
+        console.print(f"  Cookies: {len(session_auth.cookies)}")
+        console.print(f"  Teams: {len(teams)}")
+    except AuthExpiredError as e:
+        console.print("[red]✗[/red] Session is expired or invalid")
+        raise typer.Exit(code=2) from e
+    except SlowlaneError as e:
+        console.print(f"[yellow]Warning:[/yellow] Could not verify session via API: {e}")
+        console.print(f"  Created: {session_auth.created_at}")
+        console.print(f"  Cookies: {len(session_auth.cookies)}")
 
 
 @app.command()
@@ -242,6 +253,7 @@ def doctor(
     # Check Playwright
     try:
         from importlib.metadata import version as get_version
+
         pw_version = get_version("playwright")
         table.add_row("Playwright", "[green]✓ Installed[/green]", pw_version)
     except ImportError:
@@ -258,7 +270,9 @@ def doctor(
             f"Key ID: {jwt_creds.key_id[:8]}...",
         )
     else:
-        table.add_row("JWT (env)", "[yellow]○ Not set[/yellow]", "ASC_KEY_ID, ASC_ISSUER_ID, ASC_PRIVATE_KEY")
+        table.add_row(
+            "JWT (env)", "[yellow]○ Not set[/yellow]", "ASC_KEY_ID, ASC_ISSUER_ID, ASC_PRIVATE_KEY"
+        )
 
     # Check config
     if config.auth.key_id:
@@ -268,7 +282,9 @@ def doctor(
             f"Key ID: {config.auth.key_id[:8]}...",
         )
     else:
-        table.add_row("JWT (config)", "[yellow]○ Not set[/yellow]", "~/.config/slowlane/config.toml")
+        table.add_row(
+            "JWT (config)", "[yellow]○ Not set[/yellow]", "~/.config/slowlane/config.toml"
+        )
 
     # Check session env
     import os
@@ -276,7 +292,11 @@ def doctor(
     if os.environ.get("FASTLANE_SESSION"):
         table.add_row("Session (env)", "[green]✓ Set[/green]", "FASTLANE_SESSION")
     else:
-        table.add_row("Session (env)", "[yellow]○ Not set[/yellow]", "Run 'spaceauth login' or 'spaceauth export'")
+        table.add_row(
+            "Session (env)",
+            "[yellow]○ Not set[/yellow]",
+            "Run 'spaceauth login' or 'spaceauth export'",
+        )
 
     # Check secret store
     try:

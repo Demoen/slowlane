@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from slowlane.auth.session_auth import SessionAuth
 from slowlane.core.config import SlowlaneConfig
@@ -73,7 +73,7 @@ class DeveloperPortalClient:
     def list_teams(self) -> list[dict[str, Any]]:
         """List development teams the user belongs to."""
         response = self._http.get_json(f"{self.BASE_URL}/account/listTeams")
-        return response.get("teams", [])
+        return cast(list[dict[str, Any]], response.get("teams", []))
 
     # Certificates
     def list_certificates(
@@ -90,7 +90,7 @@ class DeveloperPortalClient:
             params["filter[certificateType]"] = cert_type
 
         response = self._get("account/ios/certificate/listCertRequests.action", params)
-        return response.get("certRequests", [])
+        return cast(list[dict[str, Any]], response.get("certRequests", []))
 
     def get_certificate(self, cert_id: str) -> dict[str, Any]:
         """Get certificate details."""
@@ -125,7 +125,7 @@ class DeveloperPortalClient:
         }
 
         response = self._post("account/ios/certificate/submitCertificateRequest.action", data)
-        return response.get("certRequest", {})
+        return cast(dict[str, Any], response.get("certRequest", {}))
 
     def revoke_certificate(self, cert_id: str) -> None:
         """Revoke a certificate."""
@@ -149,7 +149,7 @@ class DeveloperPortalClient:
             params["filter[profileType]"] = profile_type
 
         response = self._get("account/ios/profile/listProvisioningProfiles.action", params)
-        return response.get("provisioningProfiles", [])
+        return cast(list[dict[str, Any]], response.get("provisioningProfiles", []))
 
     def get_profile(self, profile_id: str) -> dict[str, Any]:
         """Get provisioning profile details."""
@@ -157,7 +157,7 @@ class DeveloperPortalClient:
             "account/ios/profile/getProvisioningProfile.action",
             params={"provisioningProfileId": profile_id},
         )
-        return response.get("provisioningProfile", {})
+        return cast(dict[str, Any], response.get("provisioningProfile", {}))
 
     def download_profile(self, profile_id: str) -> bytes:
         """Download provisioning profile content."""
@@ -201,7 +201,7 @@ class DeveloperPortalClient:
             data["deviceIds"] = device_ids
 
         response = self._post("account/ios/profile/createProvisioningProfile.action", data)
-        return response.get("provisioningProfile", {})
+        return cast(dict[str, Any], response.get("provisioningProfile", {}))
 
     def delete_profile(self, profile_id: str) -> None:
         """Delete a provisioning profile."""
@@ -214,7 +214,7 @@ class DeveloperPortalClient:
     def list_devices(self) -> list[dict[str, Any]]:
         """List registered devices."""
         response = self._get("account/ios/device/listDevices.action")
-        return response.get("devices", [])
+        return cast(list[dict[str, Any]], response.get("devices", []))
 
     def register_device(
         self,
@@ -236,13 +236,13 @@ class DeveloperPortalClient:
         }
 
         response = self._post("account/ios/device/addDevice.action", data)
-        return response.get("device", {})
+        return cast(dict[str, Any], response.get("device", {}))
 
     # Bundle IDs (App IDs)
     def list_app_ids(self) -> list[dict[str, Any]]:
         """List registered App IDs."""
         response = self._get("account/ios/identifiers/listAppIds.action")
-        return response.get("appIds", [])
+        return cast(list[dict[str, Any]], response.get("appIds", []))
 
     def get_app_id(self, app_id: str) -> dict[str, Any]:
         """Get App ID details."""
@@ -250,7 +250,7 @@ class DeveloperPortalClient:
             "account/ios/identifiers/getAppIdDetail.action",
             params={"appIdId": app_id},
         )
-        return response.get("appId", {})
+        return cast(dict[str, Any], response.get("appId", {}))
 
     def close(self) -> None:
         """Close the HTTP client."""

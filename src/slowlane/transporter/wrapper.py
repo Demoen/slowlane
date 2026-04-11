@@ -47,19 +47,17 @@ def find_transporter() -> Path | None:
                 return path
 
         # Check Transporter.app
-        transporter_app = Path(
-            "/Applications/Transporter.app/Contents/itms/bin/iTMSTransporter"
-        )
+        transporter_app = Path("/Applications/Transporter.app/Contents/itms/bin/iTMSTransporter")
         if transporter_app.exists():
             return transporter_app
 
     # Check PATH
     import shutil
 
-    if path := shutil.which("iTMSTransporter"):
-        return Path(path)
-    if path := shutil.which("altool"):
-        return Path(path)
+    if which_path := shutil.which("iTMSTransporter"):
+        return Path(which_path)
+    if which_path := shutil.which("altool"):
+        return Path(which_path)
 
     return None
 
@@ -108,14 +106,18 @@ class TransporterWrapper:
         if self._is_altool():
             # altool uses different argument names
             args = [
-                "--apiKey", self._key_id,
-                "--apiIssuer", self._issuer_id,
+                "--apiKey",
+                self._key_id,
+                "--apiIssuer",
+                self._issuer_id,
             ]
         else:
             # iTMSTransporter
             args = [
-                "-apiKey", self._key_id,
-                "-apiIssuer", self._issuer_id,
+                "-apiKey",
+                self._key_id,
+                "-apiIssuer",
+                self._issuer_id,
             ]
 
         return args

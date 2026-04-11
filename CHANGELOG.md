@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-04-12
+
+### Added
+- **Signing**: Implemented `signing certs list`, `certs create`, and `certs revoke` commands against the Developer Portal API.
+- **Signing**: Implemented `signing profiles list`, `profiles create`, and `profiles delete` commands against the Developer Portal API.
+- **Signing**: `certs create` auto-generates a CSR if no `--csr-path` is provided.
+- **Signing**: `profiles create` auto-selects the first available certificate when `--cert-id` is omitted.
+
+### Changed
+- **spaceauth verify**: Now makes a real API call via `DeveloperPortalClient` to confirm session validity and reports team count.
+- **`__init__.py`**: Synced `__version__` to match `pyproject.toml` (was stuck at `0.1.0`).
+
+### Fixed
+- **CI**: Removed `|| true` from ruff format and mypy steps so failures are no longer silently ignored.
+- **Type safety**: Added `cast()` in `asc/client.py`, `cli/env.py`, `cli/signing.py`, `cli/spaceauth.py`, and `cli/upload.py` to satisfy mypy.
+
 ## [0.2.4] - 2026-02-24
 
 ### Changed

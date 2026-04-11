@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /c/Users/Yannick/Desktop/programming/slowlane/slowlane/tests/unit/*.py /c/Users/Yannick/Desktop/programming/slowlane/slowlane/tests/integration/*.py)",
+      "Bash(wc -l /c/Users/Yannick/Desktop/programming/slowlane/slowlane/src/slowlane/**/*.py)",
+      "Bash(find /c/Users/Yannick/Desktop/programming/slowlane/slowlane/src -type f -name \"*.py\" -exec wc -l {} +)",
+      "Bash(grep -r \"pass$\" /c/Users/Yannick/Desktop/programming/slowlane/slowlane/src --include=\"*.py\" -n)",
+      "Bash(python3 -c \"import ast; print\\('Python syntax OK'\\)\")",
+      "Bash(python3 -m py_compile /c/Users/Yannick/Desktop/programming/slowlane/slowlane/src/slowlane/cli/main.py)",
+      "Bash(poetry run:*)",
+      "Bash(poetry install:*)",
+      "Bash(poetry version:*)"
+    ]
+  }
+}

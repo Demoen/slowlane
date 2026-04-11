@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import typer
 from rich.console import Console
@@ -25,14 +26,14 @@ def get_console(ctx: typer.Context) -> Console:
     """Get console from context."""
     if ctx.obj is None:
         return Console()
-    return ctx.obj.get("console", Console())
+    return cast(Console, ctx.obj.get("console", Console()))
 
 
 def get_config(ctx: typer.Context) -> SlowlaneConfig:
     """Get config from context."""
     if ctx.obj is None:
         return SlowlaneConfig.load()
-    return ctx.obj.get("config", SlowlaneConfig.load())
+    return cast(SlowlaneConfig, ctx.obj.get("config", SlowlaneConfig.load()))
 
 
 @app.command("ipa")

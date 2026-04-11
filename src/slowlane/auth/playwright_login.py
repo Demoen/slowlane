@@ -119,8 +119,7 @@ class PlaywrightLoginFlow:
         def check_url() -> bool:
             url = page.url
             return (
-                "appstoreconnect.apple.com" in url
-                or "developer.apple.com/account" in url
+                "appstoreconnect.apple.com" in url or "developer.apple.com/account" in url
             ) and "auth" not in url
 
         async def check_cookies() -> bool:
@@ -158,7 +157,7 @@ class PlaywrightLoginFlow:
                     if element:
                         text = await element.inner_text()
                         if "@" in text:
-                            return text.strip()
+                            return str(text).strip()
                 except Exception:
                     pass
         except Exception:

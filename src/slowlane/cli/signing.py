@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from slowlane.auth.session_auth import SessionAuth, get_session_auth
 from slowlane.core.config import SlowlaneConfig
+from slowlane.core.errors import DeveloperPortalError, SlowlaneError
 from slowlane.core.secrets import SecretStore
+from slowlane.devportal.client import DeveloperPortalClient
 
 app = typer.Typer(
     name="signing",
@@ -25,23 +30,19 @@ app.add_typer(profiles_app, name="profiles")
 
 
 def get_console(ctx: typer.Context) -> Console:
-    """Get console from context."""
     if ctx.obj is None:
         return Console()
-    return ctx.obj.get("console", Console())
+    return cast(Console, ctx.obj.get("console", Console()))
 
 
 def get_config(ctx: typer.Context) -> SlowlaneConfig:
-    """Get config from context."""
     if ctx.obj is None:
         return SlowlaneConfig.load()
-    return ctx.obj.get("config", SlowlaneConfig.load())
+    return cast(SlowlaneConfig, ctx.obj.get("config", SlowlaneConfig.load()))
 
 
-def require_session_auth(console: Console) -> None:
-    """Check for session auth (required for Developer Portal)."""
-    from slowlane.auth.session_auth import get_session_auth
-
+def require_session_auth(console: Console) -> SessionAuth:
+    """Return session auth or exit with an error."""
     session = get_session_auth(secret_store=SecretStore())
     if not session:
         console.print(
@@ -54,6 +55,7 @@ def require_session_auth(console: Console) -> None:
             )
         )
         raise typer.Exit(code=2)
+    return session
 
 
 # Certificate commands
@@ -69,29 +71,35 @@ def certs_list(
 ) -> None:
     """List signing certificates."""
     console = get_console(ctx)
-    get_config(ctx)
+    config = get_config(ctx)
+    session = require_session_auth(console)
 
-    require_session_auth(console)
+    try:
+        with DeveloperPortalClient(session_auth=session, config=config) as client:
+            certs = client.list_certificates(cert_type=cert_type)
+    except SlowlaneError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1) from e
 
-    # TODO: Implement actual API call
-    console.print("[yellow]Certificate listing not yet implemented[/yellow]")
-    console.print("This feature requires Developer Portal session authentication.")
+    if not certs:
+        console.print("[yellow]No certificates found.[/yellow]")
+        return
 
-    # Placeholder data for demonstration
-    table = Table(title="Certificates (placeholder)")
+    table = Table(title="Certificates")
     table.add_column("ID", style="cyan")
     table.add_column("Name")
     table.add_column("Type")
     table.add_column("Expires")
     table.add_column("Status")
 
-    table.add_row(
-        "ABC123",
-        "iOS Distribution",
-        "distribution",
-        "2025-12-31",
-        "Active",
-    )
+    for cert in certs:
+        table.add_row(
+            cert.get("certificateId", ""),
+            cert.get("name", ""),
+            cert.get("certificateType", ""),
+            cert.get("expirationDate", ""),
+            cert.get("status", ""),
+        )
 
     console.print(table)
 
@@ -113,19 +121,35 @@ def certs_create(
 ) -> None:
     """Create a new signing certificate."""
     console = get_console(ctx)
+    config = get_config(ctx)
+    session = require_session_auth(console)
 
-    require_session_auth(console)
+    if csr_path:
+        import pathlib
 
-    console.print(
-        Panel(
-            "[yellow]Certificate creation not yet implemented[/yellow]\n\n"
-            "This will:\n"
-            "1. Generate a CSR if not provided\n"
-            "2. Submit to Apple Developer Portal\n"
-            "3. Download and install the certificate",
-            title="🔏 Create Certificate",
+        csr_content = pathlib.Path(csr_path).read_text()
+    else:
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        csr = (
+            x509.CertificateSigningRequestBuilder()
+            .subject_name(x509.Name([x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "slowlane")]))
+            .sign(key, hashes.SHA256())
         )
-    )
+        csr_content = csr.public_bytes(serialization.Encoding.PEM).decode()
+        console.print("[dim]Generated CSR automatically.[/dim]")
+
+    try:
+        with DeveloperPortalClient(session_auth=session, config=config) as client:
+            cert = client.create_certificate(csr_content=csr_content, cert_type=cert_type)
+    except SlowlaneError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    console.print(f"[green]✓[/green] Certificate created: {cert.get('certificateId', '')}")
 
 
 @certs_app.command("revoke")
@@ -139,8 +163,8 @@ def certs_revoke(
     ⚠️  WARNING: Revoking a certificate will invalidate all apps signed with it!
     """
     console = get_console(ctx)
-
-    require_session_auth(console)
+    config = get_config(ctx)
+    session = require_session_auth(console)
 
     if not force:
         console.print(
@@ -158,7 +182,14 @@ def certs_revoke(
         if not confirm:
             raise typer.Abort()
 
-    console.print("[yellow]Certificate revocation not yet implemented[/yellow]")
+    try:
+        with DeveloperPortalClient(session_auth=session, config=config) as client:
+            client.revoke_certificate(cert_id)
+    except SlowlaneError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    console.print(f"[green]✓[/green] Certificate {cert_id} revoked.")
 
 
 # Profile commands
@@ -180,27 +211,38 @@ def profiles_list(
 ) -> None:
     """List provisioning profiles."""
     console = get_console(ctx)
-    get_config(ctx)
+    config = get_config(ctx)
+    session = require_session_auth(console)
 
-    require_session_auth(console)
+    try:
+        with DeveloperPortalClient(session_auth=session, config=config) as client:
+            profiles = client.list_profiles(profile_type=profile_type)
+    except SlowlaneError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1) from e
 
-    console.print("[yellow]Profile listing not yet implemented[/yellow]")
+    if app_id:
+        profiles = [p for p in profiles if p.get("appId", {}).get("identifier") == app_id]
 
-    # Placeholder
-    table = Table(title="Provisioning Profiles (placeholder)")
+    if not profiles:
+        console.print("[yellow]No provisioning profiles found.[/yellow]")
+        return
+
+    table = Table(title="Provisioning Profiles")
     table.add_column("ID", style="cyan")
     table.add_column("Name")
     table.add_column("Type")
     table.add_column("Bundle ID")
     table.add_column("Expires")
 
-    table.add_row(
-        "PROF123",
-        "MyApp Development",
-        "development",
-        "com.example.myapp",
-        "2025-12-31",
-    )
+    for profile in profiles:
+        table.add_row(
+            profile.get("provisioningProfileId", ""),
+            profile.get("name", ""),
+            profile.get("distributionMethod", ""),
+            profile.get("appId", {}).get("identifier", ""),
+            profile.get("expirationDate", ""),
+        )
 
     console.print(table)
 
@@ -225,18 +267,32 @@ def profiles_create(
 ) -> None:
     """Create a new provisioning profile."""
     console = get_console(ctx)
+    config = get_config(ctx)
+    session = require_session_auth(console)
 
-    require_session_auth(console)
+    try:
+        with DeveloperPortalClient(session_auth=session, config=config) as client:
+            if cert_id:
+                certificate_ids = [cert_id]
+            else:
+                certs = client.list_certificates()
+                if not certs:
+                    console.print("[red]No certificates found to include in profile.[/red]")
+                    raise typer.Exit(code=1)
+                certificate_ids = [certs[0]["certificateId"]]
+                console.print(f"[dim]Auto-selected certificate: {certificate_ids[0]}[/dim]")
 
-    console.print(
-        Panel(
-            f"[yellow]Profile creation not yet implemented[/yellow]\n\n"
-            f"Will create: {name}\n"
-            f"Type: {profile_type}\n"
-            f"Bundle ID: {bundle_id}",
-            title="📦 Create Profile",
-        )
-    )
+            profile = client.create_profile(
+                name=name,
+                bundle_id=bundle_id,
+                profile_type=profile_type,
+                certificate_ids=certificate_ids,
+            )
+    except SlowlaneError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    console.print(f"[green]✓[/green] Profile created: {profile.get('provisioningProfileId', '')}")
 
 
 @profiles_app.command("delete")
@@ -247,12 +303,19 @@ def profiles_delete(
 ) -> None:
     """Delete a provisioning profile."""
     console = get_console(ctx)
-
-    require_session_auth(console)
+    config = get_config(ctx)
+    session = require_session_auth(console)
 
     if not force:
         confirm = typer.confirm(f"Delete profile {profile_id}?")
         if not confirm:
             raise typer.Abort()
 
-    console.print("[yellow]Profile deletion not yet implemented[/yellow]")
+    try:
+        with DeveloperPortalClient(session_auth=session, config=config) as client:
+            client.delete_profile(profile_id)
+    except (SlowlaneError, DeveloperPortalError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    console.print(f"[green]✓[/green] Profile {profile_id} deleted.")

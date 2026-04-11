@@ -9,6 +9,8 @@ from typing import Any
 
 import httpx
 
+from slowlane import __version__
+
 from .config import HttpConfig
 from .errors import (
     AppleFlowChangedError,
@@ -21,10 +23,10 @@ logger = logging.getLogger(__name__)
 
 # Patterns for redacting secrets in logs
 SECRET_PATTERNS = [
-    re.compile(r'(Authorization:\s*Bearer\s+)[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+'),
+    re.compile(r"(Authorization:\s*Bearer\s+)[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+"),
     re.compile(r'(password["\']?\s*[:=]\s*["\']?)[^"\'&\s]+'),
-    re.compile(r'(X-Apple-ID-Session-Id:\s*)[^\s]+'),
-    re.compile(r'(scnt:\s*)[^\s]+'),
+    re.compile(r"(X-Apple-ID-Session-Id:\s*)[^\s]+"),
+    re.compile(r"(scnt:\s*)[^\s]+"),
 ]
 
 
@@ -32,7 +34,7 @@ def redact_secrets(text: str) -> str:
     """Redact sensitive information from text."""
     result = text
     for pattern in SECRET_PATTERNS:
-        result = pattern.sub(r'\1[REDACTED]', result)
+        result = pattern.sub(r"\1[REDACTED]", result)
     return result
 
 
@@ -71,7 +73,7 @@ class AppleHTTPClient:
     def _get_headers(self, extra_headers: dict[str, str] | None = None) -> dict[str, str]:
         """Build request headers."""
         headers: dict[str, str] = {
-            "User-Agent": "slowlane/0.1.0",
+            "User-Agent": f"slowlane/{__version__}",
             "Accept": "application/json",
         }
 
@@ -97,8 +99,8 @@ class AppleHTTPClient:
                 errors = data.get("errors", [])
                 if errors and "authentication" in str(errors).lower():
                     raise AuthExpiredError("Authentication required", status_code=status)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Could not parse error body: %s", e)
             raise AuthExpiredError("Access forbidden", status_code=status)
 
         if status == 429:
@@ -120,8 +122,8 @@ class AppleHTTPClient:
                     raise AppleFlowChangedError(f"API error: {error_detail}", status_code=status)
             except AppleFlowChangedError:
                 raise
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Could not parse error body: %s", e)
 
     def _request_with_retry(
         self,

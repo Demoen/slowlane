@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from slowlane.auth.jwt_auth import JWTAuth
 from slowlane.auth.session_auth import SessionAuth
@@ -73,7 +73,9 @@ class AppStoreConnectClient:
 
         while next_url and len(all_data) < limit:
             self._refresh_token_if_needed()
-            response = self._http.get_json(next_url, params=params if next_url.startswith(self.BASE_URL) else None)
+            response = self._http.get_json(
+                next_url, params=params if next_url.startswith(self.BASE_URL) else None
+            )
 
             data = response.get("data", [])
             all_data.extend(data)
@@ -93,7 +95,7 @@ class AppStoreConnectClient:
     def get_app(self, app_id: str) -> dict[str, Any]:
         """Get a specific app by ID."""
         response = self._get(f"apps/{app_id}")
-        return response.get("data", {})
+        return cast(dict[str, Any], response.get("data", {}))
 
     def get_app_by_bundle_id(self, bundle_id: str) -> dict[str, Any] | None:
         """Find an app by bundle ID."""
@@ -117,7 +119,7 @@ class AppStoreConnectClient:
     def get_build(self, build_id: str) -> dict[str, Any]:
         """Get a specific build by ID."""
         response = self._get(f"builds/{build_id}")
-        return response.get("data", {})
+        return cast(dict[str, Any], response.get("data", {}))
 
     def get_latest_build(self, app_id: str) -> dict[str, Any] | None:
         """Get the most recent build for an app."""
@@ -140,7 +142,7 @@ class AppStoreConnectClient:
     def get_beta_tester(self, tester_id: str) -> dict[str, Any]:
         """Get a specific beta tester."""
         response = self._get(f"betaTesters/{tester_id}")
-        return response.get("data", {})
+        return cast(dict[str, Any], response.get("data", {}))
 
     def list_beta_groups(self, app_id: str | None = None) -> list[dict[str, Any]]:
         """List beta groups."""
@@ -153,7 +155,7 @@ class AppStoreConnectClient:
     def get_beta_group(self, group_id: str) -> dict[str, Any]:
         """Get a specific beta group."""
         response = self._get(f"betaGroups/{group_id}")
-        return response.get("data", {})
+        return cast(dict[str, Any], response.get("data", {}))
 
     def invite_beta_tester(
         self,
@@ -163,17 +165,13 @@ class AppStoreConnectClient:
         last_name: str | None = None,
     ) -> dict[str, Any]:
         """Invite a tester to a beta group."""
-        data = {
+        data: dict[str, Any] = {
             "data": {
                 "type": "betaTesters",
                 "attributes": {
                     "email": email,
                 },
-                "relationships": {
-                    "betaGroups": {
-                        "data": [{"type": "betaGroups", "id": group_id}]
-                    }
-                },
+                "relationships": {"betaGroups": {"data": [{"type": "betaGroups", "id": group_id}]}},
             }
         }
 
@@ -183,13 +181,11 @@ class AppStoreConnectClient:
             data["data"]["attributes"]["lastName"] = last_name
 
         response = self._post("betaTesters", data)
-        return response.get("data", {})
+        return cast(dict[str, Any], response.get("data", {}))
 
     def add_tester_to_group(self, tester_id: str, group_id: str) -> None:
         """Add an existing tester to a beta group."""
-        data = {
-            "data": [{"type": "betaTesters", "id": tester_id}]
-        }
+        data = {"data": [{"type": "betaTesters", "id": tester_id}]}
         self._http.post(
             f"{self.BASE_URL}/betaGroups/{group_id}/relationships/betaTesters",
             json=data,
@@ -203,7 +199,7 @@ class AppStoreConnectClient:
     def get_bundle_id(self, bundle_id_resource_id: str) -> dict[str, Any]:
         """Get a specific bundle ID resource."""
         response = self._get(f"bundleIds/{bundle_id_resource_id}")
-        return response.get("data", {})
+        return cast(dict[str, Any], response.get("data", {}))
 
     def close(self) -> None:
         """Close the HTTP client."""
