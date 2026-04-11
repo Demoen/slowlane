@@ -81,7 +81,9 @@ class TestTransporterWrapper:
         with pytest.raises(TransporterError, match="credentials required"):
             wrapper._build_auth_args()
 
-    def test_is_altool_detection(self, wrapper: TransporterWrapper, altool_wrapper: TransporterWrapper) -> None:
+    def test_is_altool_detection(
+        self, wrapper: TransporterWrapper, altool_wrapper: TransporterWrapper
+    ) -> None:
         assert wrapper._is_altool() is False
         assert altool_wrapper._is_altool() is True
 
@@ -137,12 +139,17 @@ class TestTransporterWrapper:
         ipa.write_bytes(b"fake ipa content")
 
         with (
-            patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="iTMSTransporter", timeout=3600)),
+            patch(
+                "subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd="iTMSTransporter", timeout=3600),
+            ),
             pytest.raises(TransporterError, match="timed out"),
         ):
             wrapper.upload(ipa)
 
-    def test_binary_not_found_raises_error(self, wrapper: TransporterWrapper, tmp_path: Path) -> None:
+    def test_binary_not_found_raises_error(
+        self, wrapper: TransporterWrapper, tmp_path: Path
+    ) -> None:
         ipa = tmp_path / "app.ipa"
         ipa.write_bytes(b"fake ipa content")
 

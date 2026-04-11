@@ -4,8 +4,6 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from slowlane.core.config import SlowlaneConfig, get_config_dir, get_data_dir
 
 

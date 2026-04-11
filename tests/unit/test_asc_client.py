@@ -62,10 +62,10 @@ class TestAppStoreConnectClientApps:
         with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
             mock_instance = MagicMock()
             mock_http.return_value = mock_instance
-            
+
             mock_jwt = MagicMock(spec=JWTAuth)
             mock_jwt.get_token.return_value = "test_token"
-            
+
             client = AppStoreConnectClient(jwt_auth=mock_jwt)
             return client, mock_instance
 
@@ -177,10 +177,10 @@ class TestAppStoreConnectClientBuilds:
         with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
             mock_instance = MagicMock()
             mock_http.return_value = mock_instance
-            
+
             mock_jwt = MagicMock(spec=JWTAuth)
             mock_jwt.get_token.return_value = "test_token"
-            
+
             client = AppStoreConnectClient(jwt_auth=mock_jwt)
             return client, mock_instance
 
@@ -274,10 +274,10 @@ class TestAppStoreConnectClientTestFlight:
         with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
             mock_instance = MagicMock()
             mock_http.return_value = mock_instance
-            
+
             mock_jwt = MagicMock(spec=JWTAuth)
             mock_jwt.get_token.return_value = "test_token"
-            
+
             client = AppStoreConnectClient(jwt_auth=mock_jwt)
             return client, mock_instance
 
@@ -357,10 +357,10 @@ class TestAppStoreConnectClientPagination:
         with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
             mock_instance = MagicMock()
             mock_http.return_value = mock_instance
-            
+
             mock_jwt = MagicMock(spec=JWTAuth)
             mock_jwt.get_token.return_value = "test_token"
-            
+
             client = AppStoreConnectClient(jwt_auth=mock_jwt)
             return client, mock_instance
 
@@ -369,7 +369,7 @@ class TestAppStoreConnectClientPagination:
     ) -> None:
         """Test pagination follows next links."""
         client, mock_http = client_with_mock_http
-        
+
         # First page
         page1 = {
             "data": [{"id": "1"}, {"id": "2"}],
@@ -392,7 +392,7 @@ class TestAppStoreConnectClientPagination:
     ) -> None:
         """Test pagination stops at limit."""
         client, mock_http = client_with_mock_http
-        
+
         # Return more items than limit
         mock_http.get_json.return_value = {
             "data": [{"id": str(i)} for i in range(10)],

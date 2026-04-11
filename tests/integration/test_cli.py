@@ -114,7 +114,11 @@ class TestSpaceauthCommands:
         """Test spaceauth verify with no session."""
         result = runner.invoke(app, ["spaceauth", "verify"])
         # Should fail gracefully with no session
-        assert result.exit_code != 0 or "No session" in result.stdout or "not found" in result.stdout.lower()
+        assert (
+            result.exit_code != 0
+            or "No session" in result.stdout
+            or "not found" in result.stdout.lower()
+        )
 
     def test_spaceauth_export_no_session(self) -> None:
         """Test spaceauth export with no session."""
@@ -160,4 +164,3 @@ class TestSigningCommands:
         result = runner.invoke(app, ["signing", "profiles", "--help"])
         assert result.exit_code == 0
         assert "list" in result.stdout
-

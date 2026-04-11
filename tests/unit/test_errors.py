@@ -1,13 +1,11 @@
 """Tests for error handling."""
 
-import pytest
-
 from slowlane.core.errors import (
     AuthExpiredError,
     ExitCode,
-    SlowlaneError,
     NetworkError,
     RateLimitError,
+    SlowlaneError,
 )
 
 

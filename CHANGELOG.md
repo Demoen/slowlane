@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.8] - 2026-04-12
+
+### Changed
+- **Dependencies**: Bumped `click` 8.3.1→8.3.2, `cryptography` 46.0.5→46.0.7, `pyjwt` 2.11.0→2.12.1, `tomli` 2.4.0→2.4.1.
+- **Dev dependencies**: Bumped `pytest` 9.0.2→9.0.3, `pytest-cov` 7.0.0→7.1.0, `mypy` 1.19.1→1.20.0, `ruff` 0.15.4→0.15.10.
+
+### Fixed
+- **Linting**: Added `B008` to `pyproject.toml` ignore list, matching the CI workflow — suppresses false-positive for `typer.Argument` in function defaults.
+- **Tests**: Removed unused variable `token1` in `test_jwt_auth.py` (F841).
+- **Tests**: Removed trailing whitespace from blank lines in `test_asc_client.py` and `test_secrets.py` (W293).
+- **Tests**: Replaced `timezone.utc` with `datetime.UTC` in `test_secrets.py` (UP017).
+- **Formatting**: Applied `ruff format` to `test_cli.py`, `test_errors.py`, and `test_transporter.py`.
+
 ## [0.2.7] - 2026-04-12
 
 ### Changed

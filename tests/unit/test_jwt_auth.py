@@ -1,12 +1,8 @@
 """Tests for JWT authentication."""
 
-import time
 from unittest.mock import patch
 
-import pytest
-
 from slowlane.auth.jwt_auth import JWTAuth, JWTCredentials, get_jwt_auth
-
 
 # Sample test key (DO NOT USE IN PRODUCTION - this is for testing only)
 # Generated with: cryptography.hazmat.primitives.asymmetric.ec.generate_private_key(ec.SECP256R1())
@@ -96,7 +92,7 @@ class TestJWTAuth:
         )
         auth = JWTAuth(creds)
 
-        token1 = auth.get_token()
+        auth.get_token()
         auth.invalidate()
         token2 = auth.get_token()
 

@@ -1,10 +1,8 @@
 """Tests for secrets storage."""
 
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
-import pytest
 
 from slowlane.core.secrets import (
     EncryptedFileBackend,
@@ -35,7 +33,7 @@ class TestSessionData:
 
     def test_to_dict(self) -> None:
         """Test serializing to dictionary."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session = SessionData(
             cookies={"myacinfo": "abc123"},
             email_hash="hash123",
@@ -70,10 +68,10 @@ class TestEncryptedFileBackend:
         """Test storing and retrieving secrets."""
         with tempfile.TemporaryDirectory() as tmpdir:
             backend = EncryptedFileBackend(Path(tmpdir))
-            
+
             backend.store("test_key", "test_value")
             value = backend.retrieve("test_key")
-            
+
             assert value == "test_value"
 
     def test_retrieve_nonexistent(self) -> None:
@@ -87,10 +85,10 @@ class TestEncryptedFileBackend:
         """Test deleting secrets."""
         with tempfile.TemporaryDirectory() as tmpdir:
             backend = EncryptedFileBackend(Path(tmpdir))
-            
+
             backend.store("test_key", "test_value")
             assert backend.exists("test_key")
-            
+
             backend.delete("test_key")
             assert not backend.exists("test_key")
 
@@ -99,7 +97,7 @@ class TestEncryptedFileBackend:
         with tempfile.TemporaryDirectory() as tmpdir:
             backend = EncryptedFileBackend(Path(tmpdir))
             backend.store("test_key", "secret_value")
-            
+
             # Check that the file doesn't contain plaintext
             for file in Path(tmpdir).glob("*.enc"):
                 content = file.read_bytes()
@@ -114,10 +112,10 @@ class TestSecretStore:
         with tempfile.TemporaryDirectory() as tmpdir:
             backend = EncryptedFileBackend(Path(tmpdir))
             store = SecretStore(backend)
-            
+
             store.store_api_key("KEY123", "private_key_content")
             value = store.retrieve_api_key("KEY123")
-            
+
             assert value == "private_key_content"
 
     def test_store_and_retrieve_session(self) -> None:
@@ -125,16 +123,16 @@ class TestSecretStore:
         with tempfile.TemporaryDirectory() as tmpdir:
             backend = EncryptedFileBackend(Path(tmpdir))
             store = SecretStore(backend)
-            
+
             session = SessionData(
                 cookies={"myacinfo": "abc"},
                 email_hash="",
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
-            
+
             store.store_session("test@example.com", session)
             retrieved = store.retrieve_session("test@example.com")
-            
+
             assert retrieved is not None
             assert retrieved.cookies == {"myacinfo": "abc"}
 
@@ -143,14 +141,14 @@ class TestSecretStore:
         with tempfile.TemporaryDirectory() as tmpdir:
             backend = EncryptedFileBackend(Path(tmpdir))
             store = SecretStore(backend)
-            
+
             session = SessionData(
                 cookies={"myacinfo": "abc"},
                 email_hash="",
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
-            
+
             store.store_session("test@example.com", session)
             store.delete_session("test@example.com")
-            
+
             assert store.retrieve_session("test@example.com") is None
