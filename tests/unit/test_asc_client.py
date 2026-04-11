@@ -30,20 +30,20 @@ class TestAppStoreConnectClient:
 
     def test_client_initialization_with_jwt(self, mock_jwt_auth: MagicMock) -> None:
         """Test client initializes correctly with JWT auth."""
-        with patch("slowlane.asc.client.AppleHTTPClient"):
+        with patch("slowlane.core.base_client.AppleHTTPClient"):
             client = AppStoreConnectClient(jwt_auth=mock_jwt_auth)
             assert client._jwt_auth == mock_jwt_auth
 
     def test_client_initialization_without_auth(self) -> None:
         """Test client initializes without auth."""
-        with patch("slowlane.asc.client.AppleHTTPClient"):
+        with patch("slowlane.core.base_client.AppleHTTPClient"):
             client = AppStoreConnectClient()
             assert client._jwt_auth is None
             assert client._session_auth is None
 
     def test_client_context_manager(self, mock_jwt_auth: MagicMock) -> None:
         """Test client works as context manager."""
-        with patch("slowlane.asc.client.AppleHTTPClient") as mock_http:
+        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
             mock_instance = MagicMock()
             mock_http.return_value = mock_instance
 
@@ -59,7 +59,7 @@ class TestAppStoreConnectClientApps:
     @pytest.fixture
     def client_with_mock_http(self) -> tuple[AppStoreConnectClient, MagicMock]:
         """Create client with mocked HTTP layer."""
-        with patch("slowlane.asc.client.AppleHTTPClient") as mock_http:
+        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
             mock_instance = MagicMock()
             mock_http.return_value = mock_instance
             
@@ -174,7 +174,7 @@ class TestAppStoreConnectClientBuilds:
     @pytest.fixture
     def client_with_mock_http(self) -> tuple[AppStoreConnectClient, MagicMock]:
         """Create client with mocked HTTP layer."""
-        with patch("slowlane.asc.client.AppleHTTPClient") as mock_http:
+        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
             mock_instance = MagicMock()
             mock_http.return_value = mock_instance
             
@@ -271,7 +271,7 @@ class TestAppStoreConnectClientTestFlight:
     @pytest.fixture
     def client_with_mock_http(self) -> tuple[AppStoreConnectClient, MagicMock]:
         """Create client with mocked HTTP layer."""
-        with patch("slowlane.asc.client.AppleHTTPClient") as mock_http:
+        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
             mock_instance = MagicMock()
             mock_http.return_value = mock_instance
             
@@ -354,7 +354,7 @@ class TestAppStoreConnectClientPagination:
     @pytest.fixture
     def client_with_mock_http(self) -> tuple[AppStoreConnectClient, MagicMock]:
         """Create client with mocked HTTP layer."""
-        with patch("slowlane.asc.client.AppleHTTPClient") as mock_http:
+        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
             mock_instance = MagicMock()
             mock_http.return_value = mock_instance
             

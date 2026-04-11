@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.6] - 2026-04-12
+
+### Added
+- **Signing**: All `signing certs` and `signing profiles` commands now accept `--team-id` to specify a team when the account belongs to multiple teams.
+- **Signing**: Added `--json` output support to `signing certs list` and `signing profiles list` (respects global `--json` flag and `[output] format` config).
+- **Signing**: Added progress spinners to all signing commands.
+- **Config**: New `[devportal]` config section with `team_id` field — persists a default team across sessions.
+- **Tests**: Added unit tests for `AppleHTTPClient` (retry logic, error classification, secret redaction) and `TransporterWrapper` (upload, validate, error parsing). Coverage raised from 25% to 53%.
+- **Tests**: Added `tests/conftest.py` with shared fixtures (`mock_config`, `mock_jwt_auth`, `mock_session_auth`, `mock_http`).
+
+### Changed
+- **Architecture**: Extracted `BaseAppleClient` (`core/base_client.py`) — `AppStoreConnectClient` and `DeveloperPortalClient` now inherit shared `__init__`, `close`, and context manager logic.
+- **Developer Portal**: `DeveloperPortalClient` now raises a clear error listing all available teams when multiple teams exist and no `team_id` is specified, instead of silently picking the first.
+- **Signing**: `RateLimitError` is now handled specifically in all signing commands — prints retry-after hint and exits with code 3 instead of 1.
+- **CI**: Enforced minimum 50% test coverage via `--cov-fail-under=50`.
+
 ## [0.2.5] - 2026-04-12
 
 ### Added

@@ -31,13 +31,13 @@ class TestDeveloperPortalClient:
 
     def test_client_initialization(self, mock_session_auth: SessionAuth) -> None:
         """Test client initializes correctly."""
-        with patch("slowlane.devportal.client.AppleHTTPClient"):
+        with patch("slowlane.core.base_client.AppleHTTPClient"):
             client = DeveloperPortalClient(session_auth=mock_session_auth)
             assert client._session_auth == mock_session_auth
 
     def test_client_context_manager(self, mock_session_auth: SessionAuth) -> None:
         """Test client works as context manager."""
-        with patch("slowlane.devportal.client.AppleHTTPClient") as mock_http:
+        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
             mock_instance = MagicMock()
             mock_http.return_value = mock_instance
 
@@ -52,7 +52,7 @@ class TestDeveloperPortalCertificates:
 
     def test_list_certificates(self) -> None:
         """Test list_certificates returns certificates."""
-        with patch("slowlane.devportal.client.AppleHTTPClient") as mock_http:
+        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
             mock_instance = MagicMock()
             mock_http.return_value = mock_instance
             mock_certs = [
@@ -80,7 +80,7 @@ class TestDeveloperPortalCertificates:
 
     def test_list_certificates_filtered_by_type(self) -> None:
         """Test list_certificates with type filter."""
-        with patch("slowlane.devportal.client.AppleHTTPClient") as mock_http:
+        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
             mock_instance = MagicMock()
             mock_http.return_value = mock_instance
             mock_instance.get_json.return_value = {"certRequests": []}
@@ -99,7 +99,7 @@ class TestDeveloperPortalCertificates:
 
     def test_get_certificate(self) -> None:
         """Test get_certificate returns certificate details."""
-        with patch("slowlane.devportal.client.AppleHTTPClient") as mock_http:
+        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
             mock_instance = MagicMock()
             mock_http.return_value = mock_instance
             mock_instance.get_json.return_value = {"id": "cert-123", "name": "Test Cert"}
@@ -122,7 +122,7 @@ class TestDeveloperPortalProfiles:
 
     def test_list_profiles(self) -> None:
         """Test list_profiles returns profiles."""
-        with patch("slowlane.devportal.client.AppleHTTPClient") as mock_http:
+        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
             mock_instance = MagicMock()
             mock_http.return_value = mock_instance
             mock_profiles = [
@@ -150,7 +150,7 @@ class TestDeveloperPortalProfiles:
 
     def test_get_profile(self) -> None:
         """Test get_profile returns single profile."""
-        with patch("slowlane.devportal.client.AppleHTTPClient") as mock_http:
+        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
             mock_instance = MagicMock()
             mock_http.return_value = mock_instance
             mock_instance.get_json.return_value = {
@@ -175,7 +175,7 @@ class TestDeveloperPortalDevices:
 
     def test_list_devices(self) -> None:
         """Test list_devices returns devices."""
-        with patch("slowlane.devportal.client.AppleHTTPClient") as mock_http:
+        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
             mock_instance = MagicMock()
             mock_http.return_value = mock_instance
             mock_devices = [
@@ -204,7 +204,7 @@ class TestDeveloperPortalDevices:
 
     def test_list_app_ids(self) -> None:
         """Test list_app_ids returns bundle IDs."""
-        with patch("slowlane.devportal.client.AppleHTTPClient") as mock_http:
+        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
             mock_instance = MagicMock()
             mock_http.return_value = mock_instance
             mock_app_ids = [

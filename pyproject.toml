@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "slowlane"
-version = "0.2.5"
+version = "0.2.6"
 description = "Python CLI tool for Apple service automation - fastlane-compatible authentication and App Store Connect/Developer Portal operations"
 authors = ["Slowlane Contributors"]
 license = "MIT"
@@ -58,7 +58,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "--cov=src/slowlane --cov-report=term-missing --cov-report=html"
+addopts = "--cov=src/slowlane --cov-report=term-missing --cov-report=html --cov-fail-under=50"
 
 [tool.coverage.run]
 source = ["src/slowlane"]

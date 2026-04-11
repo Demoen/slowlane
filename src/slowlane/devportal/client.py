@@ -5,19 +5,18 @@ from __future__ import annotations
 from typing import Any, cast
 
 from slowlane.auth.session_auth import SessionAuth
+from slowlane.core.base_client import BaseAppleClient
 from slowlane.core.config import SlowlaneConfig
 from slowlane.core.errors import DeveloperPortalError
-from slowlane.core.http import AppleHTTPClient
 
 
-class DeveloperPortalClient:
+class DeveloperPortalClient(BaseAppleClient):
     """Client for Apple Developer Portal operations.
 
     Note: Developer Portal operations require session-based authentication.
     JWT (API key) authentication is not supported for these endpoints.
     """
 
-    # Developer Portal uses different endpoints than ASC API
     BASE_URL = "https://developer.apple.com/services-account/v1"
     PORTAL_URL = "https://developer.apple.com"
 
@@ -25,53 +24,48 @@ class DeveloperPortalClient:
         self,
         session_auth: SessionAuth,
         config: SlowlaneConfig | None = None,
+        team_id: str | None = None,
     ) -> None:
-        """Initialize client with session authentication.
-
-        Args:
-            session_auth: Session cookie authentication (required)
-            config: Configuration for HTTP client
-        """
+        super().__init__(config)
         self._session_auth = session_auth
-        self._config = config or SlowlaneConfig.load()
-
-        http_config = self._config.http if self._config else None
-        self._http = AppleHTTPClient(config=http_config)
         self._http.set_cookies(session_auth.cookies)
 
-        # Team ID is needed for most operations
-        self._team_id: str | None = None
+        # Explicit > config default > auto-detect on first use
+        self._team_id: str | None = team_id or self._config.devportal.team_id
 
     def _get_team_id(self) -> str:
-        """Get the team ID from the portal."""
         if self._team_id:
             return self._team_id
 
-        # Fetch teams
         teams = self.list_teams()
         if not teams:
             raise DeveloperPortalError("No development teams found")
 
-        # Use first team (or could prompt user)
+        if len(teams) > 1:
+            team_list = ", ".join(
+                f"{t['teamId']} ({t.get('name', '?')})" for t in teams
+            )
+            raise DeveloperPortalError(
+                f"Multiple teams found: {team_list}. "
+                "Use --team-id or set [devportal] team_id in config."
+            )
+
         self._team_id = teams[0]["teamId"]
         return self._team_id
 
     def _get(self, endpoint: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Make GET request to portal API."""
         url = f"{self.BASE_URL}/{endpoint}"
         params = params or {}
         params["teamId"] = self._get_team_id()
         return self._http.get_json(url, params=params)
 
     def _post(self, endpoint: str, data: dict[str, Any]) -> dict[str, Any]:
-        """Make POST request to portal API."""
         url = f"{self.BASE_URL}/{endpoint}"
         data["teamId"] = self._get_team_id()
         return self._http.post_json(url, data)
 
     # Teams
     def list_teams(self) -> list[dict[str, Any]]:
-        """List development teams the user belongs to."""
         response = self._http.get_json(f"{self.BASE_URL}/account/listTeams")
         return cast(list[dict[str, Any]], response.get("teams", []))
 
@@ -80,11 +74,6 @@ class DeveloperPortalClient:
         self,
         cert_type: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List signing certificates.
-
-        Args:
-            cert_type: Filter by type (development, distribution, etc.)
-        """
         params: dict[str, Any] = {}
         if cert_type:
             params["filter[certificateType]"] = cert_type
@@ -93,7 +82,6 @@ class DeveloperPortalClient:
         return cast(list[dict[str, Any]], response.get("certRequests", []))
 
     def get_certificate(self, cert_id: str) -> dict[str, Any]:
-        """Get certificate details."""
         response = self._get(
             "account/ios/certificate/downloadCertificateContent.action",
             params={"certificateId": cert_id},
@@ -105,13 +93,6 @@ class DeveloperPortalClient:
         csr_content: str,
         cert_type: str = "development",
     ) -> dict[str, Any]:
-        """Create a new certificate.
-
-        Args:
-            csr_content: Certificate Signing Request content
-            cert_type: Certificate type (development, distribution)
-        """
-        # Map friendly names to Apple's internal types
         type_map = {
             "development": "IOS_DEVELOPMENT",
             "distribution": "IOS_DISTRIBUTION",
@@ -128,7 +109,6 @@ class DeveloperPortalClient:
         return cast(dict[str, Any], response.get("certRequest", {}))
 
     def revoke_certificate(self, cert_id: str) -> None:
-        """Revoke a certificate."""
         self._post(
             "account/ios/certificate/revokeCertificate.action",
             {"certificateId": cert_id},
@@ -139,11 +119,6 @@ class DeveloperPortalClient:
         self,
         profile_type: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List provisioning profiles.
-
-        Args:
-            profile_type: Filter by type (development, appstore, adhoc)
-        """
         params: dict[str, Any] = {}
         if profile_type:
             params["filter[profileType]"] = profile_type
@@ -152,7 +127,6 @@ class DeveloperPortalClient:
         return cast(list[dict[str, Any]], response.get("provisioningProfiles", []))
 
     def get_profile(self, profile_id: str) -> dict[str, Any]:
-        """Get provisioning profile details."""
         response = self._get(
             "account/ios/profile/getProvisioningProfile.action",
             params={"provisioningProfileId": profile_id},
@@ -160,7 +134,6 @@ class DeveloperPortalClient:
         return cast(dict[str, Any], response.get("provisioningProfile", {}))
 
     def download_profile(self, profile_id: str) -> bytes:
-        """Download provisioning profile content."""
         response = self._http.get(
             f"{self.BASE_URL}/account/ios/profile/downloadProfileContent",
             params={"provisioningProfileId": profile_id, "teamId": self._get_team_id()},
@@ -175,22 +148,13 @@ class DeveloperPortalClient:
         certificate_ids: list[str],
         device_ids: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Create a new provisioning profile.
-
-        Args:
-            name: Profile name
-            bundle_id: App bundle ID
-            profile_type: Profile type (development, appstore, adhoc)
-            certificate_ids: List of certificate IDs to include
-            device_ids: List of device IDs (required for development/adhoc)
-        """
         type_map = {
             "development": "IOS_APP_DEVELOPMENT",
             "appstore": "IOS_APP_STORE",
             "adhoc": "IOS_APP_ADHOC",
         }
 
-        data = {
+        data: dict[str, Any] = {
             "provisioningProfileName": name,
             "appIdId": bundle_id,
             "distributionType": type_map.get(profile_type, profile_type),
@@ -204,7 +168,6 @@ class DeveloperPortalClient:
         return cast(dict[str, Any], response.get("provisioningProfile", {}))
 
     def delete_profile(self, profile_id: str) -> None:
-        """Delete a provisioning profile."""
         self._post(
             "account/ios/profile/deleteProvisioningProfile.action",
             {"provisioningProfileId": profile_id},
@@ -212,7 +175,6 @@ class DeveloperPortalClient:
 
     # Devices
     def list_devices(self) -> list[dict[str, Any]]:
-        """List registered devices."""
         response = self._get("account/ios/device/listDevices.action")
         return cast(list[dict[str, Any]], response.get("devices", []))
 
@@ -222,13 +184,6 @@ class DeveloperPortalClient:
         udid: str,
         platform: str = "ios",
     ) -> dict[str, Any]:
-        """Register a new device.
-
-        Args:
-            name: Device name
-            udid: Device UDID
-            platform: Platform (ios, mac)
-        """
         data = {
             "deviceName": name,
             "deviceNumber": udid,
@@ -240,24 +195,12 @@ class DeveloperPortalClient:
 
     # Bundle IDs (App IDs)
     def list_app_ids(self) -> list[dict[str, Any]]:
-        """List registered App IDs."""
         response = self._get("account/ios/identifiers/listAppIds.action")
         return cast(list[dict[str, Any]], response.get("appIds", []))
 
     def get_app_id(self, app_id: str) -> dict[str, Any]:
-        """Get App ID details."""
         response = self._get(
             "account/ios/identifiers/getAppIdDetail.action",
             params={"appIdId": app_id},
         )
         return cast(dict[str, Any], response.get("appId", {}))
-
-    def close(self) -> None:
-        """Close the HTTP client."""
-        self._http.close()
-
-    def __enter__(self) -> DeveloperPortalClient:
-        return self
-
-    def __exit__(self, *args: Any) -> None:
-        self.close()

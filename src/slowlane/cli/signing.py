@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import cast
+import json
+from typing import Any, cast
 
 import typer
 from rich.console import Console
@@ -11,7 +12,7 @@ from rich.table import Table
 
 from slowlane.auth.session_auth import SessionAuth, get_session_auth
 from slowlane.core.config import SlowlaneConfig
-from slowlane.core.errors import DeveloperPortalError, SlowlaneError
+from slowlane.core.errors import ExitCode, RateLimitError, SlowlaneError
 from slowlane.core.secrets import SecretStore
 from slowlane.devportal.client import DeveloperPortalClient
 
@@ -42,7 +43,6 @@ def get_config(ctx: typer.Context) -> SlowlaneConfig:
 
 
 def require_session_auth(console: Console) -> SessionAuth:
-    """Return session auth or exit with an error."""
     session = get_session_auth(secret_store=SecretStore())
     if not session:
         console.print(
@@ -58,6 +58,15 @@ def require_session_auth(console: Console) -> SessionAuth:
     return session
 
 
+def _handle_error(console: Console, e: SlowlaneError) -> None:
+    if isinstance(e, RateLimitError):
+        hint = f" Retry after {e.retry_after}s." if e.retry_after else ""
+        console.print(f"[yellow]Rate limited by Apple API.[/yellow]{hint}")
+        raise typer.Exit(code=ExitCode.RATE_LIMITED) from e
+    console.print(f"[red]Error:[/red] {e}")
+    raise typer.Exit(code=1) from e
+
+
 # Certificate commands
 @certs_app.command("list")
 def certs_list(
@@ -68,21 +77,30 @@ def certs_list(
         "-t",
         help="Certificate type: development, distribution, etc.",
     ),
+    team_id: str | None = typer.Option(None, "--team-id", help="Team ID (required for multiple teams)"),
 ) -> None:
     """List signing certificates."""
     console = get_console(ctx)
     config = get_config(ctx)
     session = require_session_auth(console)
+    effective_team_id = team_id or config.devportal.team_id
 
     try:
-        with DeveloperPortalClient(session_auth=session, config=config) as client:
+        with (
+            console.status("[bold blue]Fetching certificates...[/bold blue]"),
+            DeveloperPortalClient(session_auth=session, config=config, team_id=effective_team_id) as client,
+        ):
             certs = client.list_certificates(cert_type=cert_type)
     except SlowlaneError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(code=1) from e
+        _handle_error(console, e)
+        return
 
     if not certs:
         console.print("[yellow]No certificates found.[/yellow]")
+        return
+
+    if config.output.format == "json":
+        console.print(json.dumps(certs, indent=2, default=str))
         return
 
     table = Table(title="Certificates")
@@ -118,11 +136,13 @@ def certs_create(
         "--csr",
         help="Path to CSR file (auto-generated if not provided)",
     ),
+    team_id: str | None = typer.Option(None, "--team-id", help="Team ID (required for multiple teams)"),
 ) -> None:
     """Create a new signing certificate."""
     console = get_console(ctx)
     config = get_config(ctx)
     session = require_session_auth(console)
+    effective_team_id = team_id or config.devportal.team_id
 
     if csr_path:
         import pathlib
@@ -143,11 +163,14 @@ def certs_create(
         console.print("[dim]Generated CSR automatically.[/dim]")
 
     try:
-        with DeveloperPortalClient(session_auth=session, config=config) as client:
+        with (
+            console.status("[bold blue]Creating certificate...[/bold blue]"),
+            DeveloperPortalClient(session_auth=session, config=config, team_id=effective_team_id) as client,
+        ):
             cert = client.create_certificate(csr_content=csr_content, cert_type=cert_type)
     except SlowlaneError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(code=1) from e
+        _handle_error(console, e)
+        return
 
     console.print(f"[green]✓[/green] Certificate created: {cert.get('certificateId', '')}")
 
@@ -157,6 +180,7 @@ def certs_revoke(
     ctx: typer.Context,
     cert_id: str = typer.Argument(..., help="Certificate ID to revoke"),
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+    team_id: str | None = typer.Option(None, "--team-id", help="Team ID (required for multiple teams)"),
 ) -> None:
     """Revoke a signing certificate.
 
@@ -165,6 +189,7 @@ def certs_revoke(
     console = get_console(ctx)
     config = get_config(ctx)
     session = require_session_auth(console)
+    effective_team_id = team_id or config.devportal.team_id
 
     if not force:
         console.print(
@@ -183,11 +208,14 @@ def certs_revoke(
             raise typer.Abort()
 
     try:
-        with DeveloperPortalClient(session_auth=session, config=config) as client:
+        with (
+            console.status("[bold blue]Revoking certificate...[/bold blue]"),
+            DeveloperPortalClient(session_auth=session, config=config, team_id=effective_team_id) as client,
+        ):
             client.revoke_certificate(cert_id)
     except SlowlaneError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(code=1) from e
+        _handle_error(console, e)
+        return
 
     console.print(f"[green]✓[/green] Certificate {cert_id} revoked.")
 
@@ -208,24 +236,33 @@ def profiles_list(
         "-a",
         help="Filter by bundle ID",
     ),
+    team_id: str | None = typer.Option(None, "--team-id", help="Team ID (required for multiple teams)"),
 ) -> None:
     """List provisioning profiles."""
     console = get_console(ctx)
     config = get_config(ctx)
     session = require_session_auth(console)
+    effective_team_id = team_id or config.devportal.team_id
 
     try:
-        with DeveloperPortalClient(session_auth=session, config=config) as client:
+        with (
+            console.status("[bold blue]Fetching profiles...[/bold blue]"),
+            DeveloperPortalClient(session_auth=session, config=config, team_id=effective_team_id) as client,
+        ):
             profiles = client.list_profiles(profile_type=profile_type)
     except SlowlaneError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(code=1) from e
+        _handle_error(console, e)
+        return
 
     if app_id:
         profiles = [p for p in profiles if p.get("appId", {}).get("identifier") == app_id]
 
     if not profiles:
         console.print("[yellow]No provisioning profiles found.[/yellow]")
+        return
+
+    if config.output.format == "json":
+        console.print(json.dumps(profiles, indent=2, default=str))
         return
 
     table = Table(title="Provisioning Profiles")
@@ -264,33 +301,38 @@ def profiles_create(
         "-c",
         help="Certificate ID (auto-select if not provided)",
     ),
+    team_id: str | None = typer.Option(None, "--team-id", help="Team ID (required for multiple teams)"),
 ) -> None:
     """Create a new provisioning profile."""
     console = get_console(ctx)
     config = get_config(ctx)
     session = require_session_auth(console)
+    effective_team_id = team_id or config.devportal.team_id
 
     try:
-        with DeveloperPortalClient(session_auth=session, config=config) as client:
-            if cert_id:
-                certificate_ids = [cert_id]
-            else:
-                certs = client.list_certificates()
-                if not certs:
-                    console.print("[red]No certificates found to include in profile.[/red]")
-                    raise typer.Exit(code=1)
-                certificate_ids = [certs[0]["certificateId"]]
-                console.print(f"[dim]Auto-selected certificate: {certificate_ids[0]}[/dim]")
+        with (
+            console.status("[bold blue]Creating profile...[/bold blue]"),
+            DeveloperPortalClient(session_auth=session, config=config, team_id=effective_team_id) as client,
+        ):
+                if cert_id:
+                    certificate_ids = [cert_id]
+                else:
+                    certs = client.list_certificates()
+                    if not certs:
+                        console.print("[red]No certificates found to include in profile.[/red]")
+                        raise typer.Exit(code=1)
+                    certificate_ids = [certs[0]["certificateId"]]
+                    console.print(f"[dim]Auto-selected certificate: {certificate_ids[0]}[/dim]")
 
-            profile = client.create_profile(
-                name=name,
-                bundle_id=bundle_id,
-                profile_type=profile_type,
-                certificate_ids=certificate_ids,
-            )
+                profile = client.create_profile(
+                    name=name,
+                    bundle_id=bundle_id,
+                    profile_type=profile_type,
+                    certificate_ids=certificate_ids,
+                )
     except SlowlaneError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(code=1) from e
+        _handle_error(console, e)
+        return
 
     console.print(f"[green]✓[/green] Profile created: {profile.get('provisioningProfileId', '')}")
 
@@ -300,11 +342,13 @@ def profiles_delete(
     ctx: typer.Context,
     profile_id: str = typer.Argument(..., help="Profile ID to delete"),
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+    team_id: str | None = typer.Option(None, "--team-id", help="Team ID (required for multiple teams)"),
 ) -> None:
     """Delete a provisioning profile."""
     console = get_console(ctx)
     config = get_config(ctx)
     session = require_session_auth(console)
+    effective_team_id = team_id or config.devportal.team_id
 
     if not force:
         confirm = typer.confirm(f"Delete profile {profile_id}?")
@@ -312,10 +356,17 @@ def profiles_delete(
             raise typer.Abort()
 
     try:
-        with DeveloperPortalClient(session_auth=session, config=config) as client:
+        with (
+            console.status("[bold blue]Deleting profile...[/bold blue]"),
+            DeveloperPortalClient(session_auth=session, config=config, team_id=effective_team_id) as client,
+        ):
             client.delete_profile(profile_id)
-    except (SlowlaneError, DeveloperPortalError) as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(code=1) from e
+    except SlowlaneError as e:
+        _handle_error(console, e)
+        return
 
     console.print(f"[green]✓[/green] Profile {profile_id} deleted.")
+
+
+def _output_json(console: Console, data: Any) -> None:
+    console.print(json.dumps(data, indent=2, default=str))

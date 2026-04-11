@@ -61,12 +61,20 @@ class OutputConfig:
 
 
 @dataclass
+class DevPortalConfig:
+    """Developer Portal configuration."""
+
+    team_id: str | None = None
+
+
+@dataclass
 class SlowlaneConfig:
     """Main configuration container."""
 
     auth: AuthConfig = field(default_factory=AuthConfig)
     http: HttpConfig = field(default_factory=HttpConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
+    devportal: DevPortalConfig = field(default_factory=DevPortalConfig)
 
     _path: Path | None = field(default=None, repr=False)
 
@@ -108,6 +116,10 @@ class SlowlaneConfig:
             self.output.format = output.get("format", self.output.format)
             self.output.verbose = output.get("verbose", self.output.verbose)
 
+        if "devportal" in data:
+            dp = data["devportal"]
+            self.devportal.team_id = dp.get("team_id", self.devportal.team_id)
+
     def to_dict(self) -> dict[str, Any]:
         """Convert config to dictionary (excludes None values for TOML compatibility)."""
 
@@ -132,6 +144,9 @@ class SlowlaneConfig:
                 "format": self.output.format,
                 "verbose": self.output.verbose,
             },
+            "devportal": _filter_none({
+                "team_id": self.devportal.team_id,
+            }),
         }
 
     def save(self, path: Path | None = None) -> None:
