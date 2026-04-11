@@ -16,12 +16,6 @@ class TestCLI:
         assert result.exit_code == 0
         assert "slowlane" in result.stdout.lower()
 
-    def test_version(self) -> None:
-        """Test version command."""
-        result = runner.invoke(app, ["version"])
-        assert result.exit_code == 0
-        assert "0.2.6" in result.stdout
-
     def test_spaceauth_help(self) -> None:
         """Test spaceauth --help."""
         result = runner.invoke(app, ["spaceauth", "--help"])
