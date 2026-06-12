@@ -124,7 +124,7 @@ jobs:
         run: poetry run pytest tests/ --cov=src/slowlane --cov-report=xml --cov-report=term-missing --no-cov-on-fail
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
