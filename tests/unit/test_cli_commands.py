@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import typer
-from click import Abort
+from click import Abort, unstyle
 from rich.console import Console
 from typer.testing import CliRunner
 
@@ -645,7 +645,7 @@ def test_certificate_creation_requires_csr() -> None:
         result = runner.invoke(app, ["signing", "certs", "create", "--type", "development"])
 
     assert result.exit_code == 2
-    assert "--csr" in result.output
+    assert "--csr" in unstyle(result.output)
 
 
 def test_certificate_creation_uses_existing_csr(tmp_path: Path) -> None:
@@ -746,7 +746,7 @@ def test_device_profile_requires_device(profile_type: str) -> None:
         )
 
     assert result.exit_code == 2
-    assert "at least one --device is required" in result.output
+    assert "at least one --device is required" in unstyle(result.output)
     require_session.assert_not_called()
 
 
@@ -775,7 +775,7 @@ def test_appstore_profile_rejects_device() -> None:
         )
 
     assert result.exit_code == 2
-    assert "--device is not allowed" in result.output
+    assert "--device is not allowed" in unstyle(result.output)
     require_session.assert_not_called()
 
 
