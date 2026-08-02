@@ -1,0 +1,14 @@
+:root {
+  --md-primary-fg-color: #3949ab;
+  --md-primary-fg-color--light: #5c6bc0;
+  --md-primary-fg-color--dark: #283593;
+  --md-accent-fg-color: #1976d2;
+}
+
+.md-typeset h1 {
+  font-weight: 600;
+}
+
+.md-typeset table:not([class]) th {
+  font-weight: 600;
+}
