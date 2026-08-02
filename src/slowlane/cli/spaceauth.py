@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from enum import StrEnum
 from typing import cast
 
 import typer
@@ -10,7 +12,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from slowlane.auth.playwright_login import interactive_login
-from slowlane.auth.session_auth import get_session_auth, validate_session_cookies
+from slowlane.auth.session_auth import SessionAuth, get_session_auth, validate_session_cookies
 from slowlane.core.config import SlowlaneConfig
 from slowlane.core.errors import SessionError
 from slowlane.core.secrets import SecretStore
@@ -22,6 +24,11 @@ app = typer.Typer(
 )
 
 
+class LoginService(StrEnum):
+    APPSTORECONNECT = "appstoreconnect"
+    DEVELOPER = "developer"
+
+
 def get_console(ctx: typer.Context) -> Console:
     """Get console from context."""
     if ctx.obj is None:
@@ -31,9 +38,11 @@ def get_console(ctx: typer.Context) -> Console:
 
 def get_config(ctx: typer.Context) -> SlowlaneConfig:
     """Get config from context."""
-    if ctx.obj is None:
-        return SlowlaneConfig.load()
-    return cast(SlowlaneConfig, ctx.obj.get("config", SlowlaneConfig.load()))
+    if ctx.obj is not None:
+        config = ctx.obj.get("config")
+        if isinstance(config, SlowlaneConfig):
+            return config
+    return SlowlaneConfig.load()
 
 
 @app.command()
@@ -45,11 +54,12 @@ def login(
         "-e",
         help="Apple ID email (optional, for session storage)",
     ),
-    service: str = typer.Option(
-        "appstoreconnect",
+    service: LoginService = typer.Option(
+        LoginService.DEVELOPER,
         "--service",
         "-s",
         help="Target service: appstoreconnect or developer",
+        case_sensitive=False,
     ),
     headless: bool = typer.Option(
         False,
@@ -73,32 +83,31 @@ def login(
             "2. Complete 2FA verification if prompted\n"
             "3. Wait for the page to load fully\n\n"
             "[dim]The browser will close automatically once login is detected.[/dim]",
-            title="🍎 Spaceauth Login",
+            title="Spaceauth login",
         )
     )
 
     try:
         with console.status("[bold blue]Launching browser...[/bold blue]"):
-            session_data = interactive_login(headless=headless, target_service=service)
+            session_data = interactive_login(headless=headless, target_service=service.value)
 
         # Validate cookies
         missing = validate_session_cookies(session_data.cookies)
         if missing:
-            console.print(f"[yellow]Warning:[/yellow] Missing cookies: {', '.join(missing)}")
+            console.print(f"[red]Login failed:[/red] Missing cookies: {', '.join(missing)}")
+            raise typer.Exit(code=2)
 
         # Store session
         if email:
             secret_store = SecretStore()
             secret_store.store_session(email, session_data)
-            console.print(f"[green]✓[/green] Session stored for {email}")
+            console.print(f"[green]Session stored for {email}.[/green]")
         else:
-            console.print(
-                "[yellow]Note:[/yellow] Session not stored (no --email provided). "
-                "Use 'spaceauth export' to get the session string."
-            )
+            export_str = SessionAuth(session_data).to_export_string()
+            typer.echo(f'export FASTLANE_SESSION="{export_str}"')
 
         # Show session info
-        console.print("\n[green]✓ Login successful![/green]")
+        console.print("\n[green]Login succeeded.[/green]")
         console.print(f"  Cookies captured: {len(session_data.cookies)}")
         console.print(f"  Service: {session_data.target_service}")
 
@@ -145,9 +154,9 @@ def export(
     if config.output.format == "json":
         import json
 
-        console.print(json.dumps({"FASTLANE_SESSION": export_str}))
+        typer.echo(json.dumps({"FASTLANE_SESSION": export_str}))
     else:
-        console.print(f'export FASTLANE_SESSION="{export_str}"')
+        typer.echo(f'export FASTLANE_SESSION="{export_str}"')
 
 
 @app.command()
@@ -187,17 +196,16 @@ def verify(
     try:
         with DeveloperPortalClient(session_auth=session_auth) as client:
             teams = client.list_teams()
-        console.print("[green]✓[/green] Session is valid")
+        console.print("[green]Session is valid.[/green]")
         console.print(f"  Created: {session_auth.created_at}")
         console.print(f"  Cookies: {len(session_auth.cookies)}")
         console.print(f"  Teams: {len(teams)}")
     except AuthExpiredError as e:
-        console.print("[red]✗[/red] Session is expired or invalid")
+        console.print("[red]Session is expired or invalid.[/red]")
         raise typer.Exit(code=2) from e
     except SlowlaneError as e:
-        console.print(f"[yellow]Warning:[/yellow] Could not verify session via API: {e}")
-        console.print(f"  Created: {session_auth.created_at}")
-        console.print(f"  Cookies: {len(session_auth.cookies)}")
+        console.print(f"[red]Could not verify session via API:[/red] {e}")
+        raise typer.Exit(code=e.exit_code) from e
 
 
 @app.command()
@@ -207,7 +215,7 @@ def revoke(
         ...,
         "--email",
         "-e",
-        help="Apple ID email to revoke session for",
+        help="Apple ID email whose local session should be deleted",
     ),
     force: bool = typer.Option(
         False,
@@ -216,7 +224,7 @@ def revoke(
         help="Skip confirmation",
     ),
 ) -> None:
-    """Revoke and delete a stored session."""
+    """Delete a locally stored session."""
     console = get_console(ctx)
 
     if not force:
@@ -227,7 +235,11 @@ def revoke(
     secret_store = SecretStore()
     secret_store.delete_session(email)
 
-    console.print(f"[green]✓[/green] Session deleted for {email}")
+    console.print(f"[green]Session deleted for {email}.[/green]")
+    console.print(
+        "[yellow]Exported copies and the session at Apple remain valid until invalidated "
+        "through the Apple account.[/yellow]"
+    )
 
 
 @app.command()
@@ -255,46 +267,47 @@ def doctor(
         from importlib.metadata import version as get_version
 
         pw_version = get_version("playwright")
-        table.add_row("Playwright", "[green]✓ Installed[/green]", pw_version)
+        table.add_row("Playwright", "[green]Installed[/green]", pw_version)
     except ImportError:
-        table.add_row("Playwright", "[red]✗ Not installed[/red]", "pip install playwright")
+        table.add_row("Playwright", "[red]Not installed[/red]", "pip install playwright")
 
     # Check JWT credentials
     from slowlane.auth.jwt_auth import JWTCredentials
+    from slowlane.core.errors import JWTError
 
-    jwt_creds = JWTCredentials.from_env()
+    try:
+        jwt_creds = JWTCredentials.from_env()
+    except JWTError as e:
+        table.add_row("JWT (env)", "[red]Invalid[/red]", str(e))
+        jwt_creds = None
     if jwt_creds:
         table.add_row(
             "JWT (env)",
-            "[green]✓ Configured[/green]",
+            "[green]Configured[/green]",
             f"Key ID: {jwt_creds.key_id[:8]}...",
         )
-    else:
+    elif not any(name in os.environ for name in JWTCredentials.ENVIRONMENT_VARIABLES):
         table.add_row(
-            "JWT (env)", "[yellow]○ Not set[/yellow]", "ASC_KEY_ID, ASC_ISSUER_ID, ASC_PRIVATE_KEY"
+            "JWT (env)", "[yellow]Not set[/yellow]", "ASC_KEY_ID, ASC_ISSUER_ID, ASC_PRIVATE_KEY"
         )
 
     # Check config
     if config.auth.key_id:
         table.add_row(
             "JWT (config)",
-            "[green]✓ Configured[/green]",
+            "[green]Configured[/green]",
             f"Key ID: {config.auth.key_id[:8]}...",
         )
     else:
-        table.add_row(
-            "JWT (config)", "[yellow]○ Not set[/yellow]", "~/.config/slowlane/config.toml"
-        )
+        table.add_row("JWT (config)", "[yellow]Not set[/yellow]", "~/.config/slowlane/config.toml")
 
     # Check session env
-    import os
-
     if os.environ.get("FASTLANE_SESSION"):
-        table.add_row("Session (env)", "[green]✓ Set[/green]", "FASTLANE_SESSION")
+        table.add_row("Session (env)", "[green]Set[/green]", "FASTLANE_SESSION")
     else:
         table.add_row(
             "Session (env)",
-            "[yellow]○ Not set[/yellow]",
+            "[yellow]Not set[/yellow]",
             "Run 'spaceauth login' or 'spaceauth export'",
         )
 
@@ -302,8 +315,8 @@ def doctor(
     try:
         secret_store = SecretStore()
         backend_name = type(secret_store._backend).__name__
-        table.add_row("Secret Store", "[green]✓ Available[/green]", backend_name)
+        table.add_row("Secret Store", "[green]Available[/green]", backend_name)
     except Exception as e:
-        table.add_row("Secret Store", "[red]✗ Error[/red]", str(e))
+        table.add_row("Secret Store", "[red]Error[/red]", str(e))
 
     console.print(table)

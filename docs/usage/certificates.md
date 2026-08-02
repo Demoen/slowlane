@@ -1,35 +1,33 @@
 # Certificates
 
-Manage your signing certificates for distribution and development.
+Certificate commands use an Apple ID session and Apple's Developer Portal services. Include `--team-id TEAM_ID` when the account belongs to more than one team.
 
-## List Certificates
-
-List all valid certificates:
+## List certificates
 
 ```bash
 slowlane signing certs list
 ```
 
-## Creates a Certificate
-
-Create a new distribution certificate (e.g., for the App Store):
+Filter by certificate type:
 
 ```bash
-slowlane signing certs create --type distribution
+slowlane signing certs list --type development
 ```
 
-Create a development certificate:
+## Create a certificate
+
+Create a certificate from an existing PEM-encoded certificate signing request:
 
 ```bash
-slowlane signing certs create --type development
+slowlane signing certs create --type distribution --csr ./request.csr
 ```
 
-## Revoke a Certificate
+## Revoke a certificate
 
-Revoke a certificate by its Serial Number or ID:
+The certificate ID is positional:
 
 ```bash
-slowlane signing certs revoke --id CERT_ID
+slowlane signing certs revoke CERT_ID
 ```
 
-> **Warning**: Revoking a distribution certificate will invalidate any provisioning profiles that use it. Ensure you really want to do this.
+Add `--force` only when a non-interactive workflow has already confirmed the target. Revoking a certificate can invalidate provisioning profiles that depend on it and cannot be undone.

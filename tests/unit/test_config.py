@@ -4,7 +4,10 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from slowlane.core.config import SlowlaneConfig, get_config_dir, get_data_dir
+import pytest
+
+from slowlane.core.config import HttpConfig, SlowlaneConfig, get_config_dir, get_data_dir
+from slowlane.core.errors import ConfigError
 
 
 class TestConfigDirs:
@@ -84,3 +87,36 @@ class TestSlowlaneConfig:
             assert config.auth.key_id == "ENV_KEY"
             assert config.auth.issuer_id == "ENV_ISSUER"
             assert config.output.format == "json"
+
+    @pytest.mark.parametrize(
+        ("contents", "message"),
+        [
+            ("[http]\ntimeout = 0\n", "http.timeout"),
+            ("[http]\nmax_retries = -1\n", "http.max_retries"),
+            ("[http]\nbackoff_factor = -0.5\n", "http.backoff_factor"),
+            ("[auth]\ndefault_mode = 'invalid'\n", "auth.default_mode"),
+            ("[output]\nformat = 'xml'\n", "output.format"),
+        ],
+    )
+    def test_load_rejects_invalid_values(self, tmp_path: Path, contents: str, message: str) -> None:
+        path = tmp_path / "config.toml"
+        path.write_text(contents, encoding="utf-8")
+
+        with pytest.raises(ConfigError, match=message):
+            SlowlaneConfig.load(path)
+
+    def test_http_config_rejects_invalid_runtime_values(self) -> None:
+        for config_factory in (
+            lambda: HttpConfig(timeout=True),
+            lambda: HttpConfig(max_retries=1.5),
+            lambda: HttpConfig(backoff_factor=float("inf")),
+        ):
+            with pytest.raises(ConfigError):
+                config_factory()
+
+    def test_save_rejects_invalid_mutated_config(self, tmp_path: Path) -> None:
+        config = SlowlaneConfig()
+        config.output.format = "xml"
+
+        with pytest.raises(ConfigError, match=r"output\.format"):
+            config.save(tmp_path / "config.toml")

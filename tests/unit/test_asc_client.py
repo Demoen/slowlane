@@ -8,6 +8,7 @@ import pytest
 
 from slowlane.asc.client import AppStoreConnectClient
 from slowlane.auth.jwt_auth import JWTAuth
+from slowlane.core.errors import AppStoreConnectError
 
 
 class TestAppStoreConnectClient:
@@ -35,11 +36,11 @@ class TestAppStoreConnectClient:
             assert client._jwt_auth == mock_jwt_auth
 
     def test_client_initialization_without_auth(self) -> None:
-        """Test client initializes without auth."""
-        with patch("slowlane.core.base_client.AppleHTTPClient"):
-            client = AppStoreConnectClient()
-            assert client._jwt_auth is None
-            assert client._session_auth is None
+        with (
+            patch("slowlane.core.base_client.AppleHTTPClient"),
+            pytest.raises(AppStoreConnectError, match="API key authentication"),
+        ):
+            AppStoreConnectClient()
 
     def test_client_context_manager(self, mock_jwt_auth: MagicMock) -> None:
         """Test client works as context manager."""
@@ -252,6 +253,9 @@ class TestAppStoreConnectClientBuilds:
 
         assert result is not None
         assert result["id"] == "latest-build"
+        params = mock_http.get_json.call_args.kwargs["params"]
+        assert params["filter[app]"] == "app-123"
+        assert params["sort"] == "-uploadedDate"
 
     def test_get_latest_build_no_builds(
         self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
@@ -347,6 +351,17 @@ class TestAppStoreConnectClientTestFlight:
         assert result["id"] == "new-tester-id"
         mock_http.post_json.assert_called_once()
 
+    def test_add_tester_to_group_refreshes_token(
+        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
+    ) -> None:
+        client, mock_http = client_with_mock_http
+
+        with patch.object(client, "_refresh_token_if_needed") as refresh:
+            client.add_tester_to_group("tester-1", "group-1")
+
+        refresh.assert_called_once_with()
+        mock_http.post.assert_called_once()
+
 
 class TestAppStoreConnectClientPagination:
     """Tests for pagination handling."""
@@ -373,7 +388,7 @@ class TestAppStoreConnectClientPagination:
         # First page
         page1 = {
             "data": [{"id": "1"}, {"id": "2"}],
-            "links": {"next": "https://api.example.com/v1/apps?cursor=abc"},
+            "links": {"next": "https://api.appstoreconnect.apple.com/v1/apps?cursor=abc"},
         }
         # Second page
         page2 = {
@@ -386,6 +401,68 @@ class TestAppStoreConnectClientPagination:
 
         assert len(result) == 3
         assert mock_http.get_json.call_count == 2
+        assert mock_http.get_json.call_args_list[0].kwargs["params"] == {"limit": 10}
+        assert mock_http.get_json.call_args_list[1].kwargs["params"] is None
+
+    def test_pagination_rejects_external_next_link(
+        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
+    ) -> None:
+        client, mock_http = client_with_mock_http
+        mock_http.get_json.return_value = {
+            "data": [{"id": "1"}],
+            "links": {"next": "https://example.com/v1/apps?cursor=abc"},
+        }
+
+        with pytest.raises(AppStoreConnectError, match="outside App Store Connect"):
+            client.list_apps(limit=10)
+
+        assert mock_http.get_json.call_count == 1
+
+    def test_pagination_rejects_non_string_next_link(
+        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
+    ) -> None:
+        client, mock_http = client_with_mock_http
+        mock_http.get_json.return_value = {"data": [], "links": {"next": 42}}
+
+        with pytest.raises(AppStoreConnectError, match="pagination URL"):
+            client.list_apps(limit=10)
+
+    def test_pagination_rejects_repeated_empty_page(
+        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
+    ) -> None:
+        client, mock_http = client_with_mock_http
+        repeated_url = "https://api.appstoreconnect.apple.com/v1/apps?cursor=repeated"
+        mock_http.get_json.side_effect = [
+            {"data": [], "links": {"next": repeated_url}},
+            {"data": [], "links": {"next": repeated_url}},
+        ]
+
+        with pytest.raises(AppStoreConnectError, match="repeated a page URL"):
+            client.list_apps(limit=10)
+
+        assert mock_http.get_json.call_count == 2
+
+    def test_pagination_does_not_mutate_params(
+        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
+    ) -> None:
+        client, mock_http = client_with_mock_http
+        mock_http.get_json.return_value = {"data": [], "links": {}}
+        params = {"filter[app]": "app-1"}
+
+        client._paginate("builds", params=params)
+
+        assert params == {"filter[app]": "app-1"}
+
+    @pytest.mark.parametrize("limit", [0, -1])
+    def test_pagination_non_positive_limit_returns_empty(
+        self,
+        client_with_mock_http: tuple[AppStoreConnectClient, MagicMock],
+        limit: int,
+    ) -> None:
+        client, mock_http = client_with_mock_http
+
+        assert client.list_apps(limit=limit) == []
+        mock_http.get_json.assert_not_called()
 
     def test_pagination_respects_limit(
         self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]

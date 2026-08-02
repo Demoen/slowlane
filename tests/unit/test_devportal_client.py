@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from slowlane.auth.session_auth import SessionAuth
+from slowlane.core.errors import DeveloperPortalError
 from slowlane.core.secrets import SessionData
 from slowlane.devportal.client import DeveloperPortalClient
 
@@ -45,6 +46,68 @@ class TestDeveloperPortalClient:
                 assert client is not None
 
             mock_instance.close.assert_called_once()
+
+    def test_get_does_not_mutate_params(self, mock_session_auth: SessionAuth) -> None:
+        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
+            mock_instance = MagicMock()
+            mock_http.return_value = mock_instance
+            mock_instance.get_json.return_value = {"devices": []}
+            client = DeveloperPortalClient(session_auth=mock_session_auth, team_id="TEAM123")
+            params = {"filter[status]": "ENABLED"}
+
+            client._get("account/ios/device/listDevices.action", params)
+
+            assert params == {"filter[status]": "ENABLED"}
+            sent_params = mock_instance.get_json.call_args.kwargs["params"]
+            assert sent_params == {"filter[status]": "ENABLED", "teamId": "TEAM123"}
+
+    def test_post_does_not_mutate_data(self, mock_session_auth: SessionAuth) -> None:
+        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
+            mock_instance = MagicMock()
+            mock_http.return_value = mock_instance
+            mock_instance.post_json.return_value = {"device": {"id": "device-1"}}
+            client = DeveloperPortalClient(session_auth=mock_session_auth, team_id="TEAM123")
+            data = {"deviceName": "iPhone"}
+
+            client._post("account/ios/device/addDevice.action", data)
+
+            assert data == {"deviceName": "iPhone"}
+            sent_data = mock_instance.post_json.call_args.args[1]
+            assert sent_data == {"deviceName": "iPhone", "teamId": "TEAM123"}
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            {"resultCode": 35, "userString": "Authentication failed"},
+            {"success": False, "errorMessage": "Request was rejected"},
+        ],
+    )
+    def test_response_level_errors_raise(
+        self,
+        mock_session_auth: SessionAuth,
+        response: dict[str, object],
+    ) -> None:
+        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
+            mock_instance = MagicMock()
+            mock_http.return_value = mock_instance
+            mock_instance.get_json.return_value = response
+            client = DeveloperPortalClient(session_auth=mock_session_auth, team_id="TEAM123")
+
+            with pytest.raises(DeveloperPortalError):
+                client.list_devices()
+
+    def test_list_teams_validates_response_errors(self, mock_session_auth: SessionAuth) -> None:
+        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
+            mock_instance = MagicMock()
+            mock_http.return_value = mock_instance
+            mock_instance.get_json.return_value = {
+                "resultCode": 35,
+                "resultString": "Session expired",
+            }
+            client = DeveloperPortalClient(session_auth=mock_session_auth)
+
+            with pytest.raises(DeveloperPortalError, match="Session expired"):
+                client.list_teams()
 
 
 class TestDeveloperPortalCertificates:

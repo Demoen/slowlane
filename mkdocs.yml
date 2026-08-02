@@ -1,30 +1,29 @@
 site_name: Slowlane
+site_description: Command-line automation for App Store Connect and the Apple Developer Portal
 site_url: https://demoen.github.io/slowlane/
 repo_url: https://github.com/Demoen/slowlane
 repo_name: Demoen/slowlane
+edit_uri: edit/main/docs/
 
 theme:
   name: material
   icon:
-    logo: material/tortoise # Closest to a snail in material icons, or we use emoji in site_name
-  favicon: assets/snail.png # We might need to create this or just use emoji in title
+    logo: material/console
   palette:
-    # Light mode
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: teal
-      accent: lime
-      toggle:
-        icon: material/weather-sunny
-        name: Switch to dark mode
-    # Dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: teal
-      accent: lime
+      primary: indigo
+      accent: blue
       toggle:
         icon: material/weather-night
-        name: Switch to light mode
+        name: Use dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/weather-sunny
+        name: Use light mode
   features:
     - navigation.instant
     - navigation.tracking
@@ -36,6 +35,9 @@ theme:
     - content.code.copy
     - content.action.edit
 
+plugins:
+  - search
+
 extra_css:
   - stylesheets/extra.css
 
@@ -43,7 +45,6 @@ extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/Demoen/slowlane
-
 
 markdown_extensions:
   - admonition
@@ -59,18 +60,16 @@ markdown_extensions:
       alternate_style: true
 
 nav:
-  - Home: index.md
-  - Getting Started: installation.md
+  - Overview: index.md
+  - Installation: installation.md
   - Authentication: authentication.md
-  - Usage:
-    - app_store:
+  - App Store Connect:
       - Apps: usage/apps.md
-      - Builds & TestFlight: usage/builds.md
-      - Uploading: usage/upload.md
-    - developer_portal:
+      - Builds and TestFlight: usage/builds.md
+      - Uploads: usage/upload.md
+  - Developer Portal:
       - Certificates: usage/certificates.md
-      - Profiles: usage/profiles.md
-
+      - Provisioning Profiles: usage/profiles.md
   - Reference:
-    - Configuration: configuration.md
-    - CLI Reference: cli.md
+      - Configuration: configuration.md
+      - CLI: cli.md

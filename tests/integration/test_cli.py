@@ -1,10 +1,37 @@
 """CLI integration tests."""
 
+from pathlib import Path
+
+import pytest
 from typer.testing import CliRunner
 
 from slowlane.cli.main import app
+from slowlane.core.errors import SecretStorageError
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def isolated_credentials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "FASTLANE_SESSION",
+        "ASC_KEY_ID",
+        "ASC_ISSUER_ID",
+        "ASC_PRIVATE_KEY",
+        "ASC_PRIVATE_KEY_PATH",
+        "SLOWLANE_JSON",
+        "SLOWLANE_VERBOSE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+    def unavailable_keyring() -> None:
+        raise SecretStorageError("Keyring disabled for test isolation")
+
+    monkeypatch.setattr("slowlane.core.secrets.KeyringBackend", unavailable_keyring)
 
 
 class TestCLI:

@@ -1,15 +1,70 @@
 """Tests for secrets storage."""
 
+import hashlib
+import os
+import stat
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
+import pytest
+from cryptography.fernet import Fernet
+
+from slowlane.core.errors import SecretStorageError
 from slowlane.core.secrets import (
     EncryptedFileBackend,
+    KeyringBackend,
     SecretStore,
     SessionData,
     hash_email,
 )
+
+
+class TestKeyringBackend:
+    def test_rejects_unusable_backend(self) -> None:
+        backend = MagicMock()
+        backend.priority = 0
+
+        with (
+            patch("keyring.get_keyring", return_value=backend),
+            pytest.raises(SecretStorageError, match="not usable"),
+        ):
+            KeyringBackend()
+
+    def test_accepts_viable_backend(self) -> None:
+        backend = MagicMock()
+        backend.priority = 1
+
+        with patch("keyring.get_keyring", return_value=backend) as get_keyring:
+            KeyringBackend()
+
+        get_keyring.assert_called_once_with()
+
+    def test_delete_ignores_missing_entry(self) -> None:
+        backend = MagicMock()
+        backend.priority = 1
+
+        with (
+            patch("keyring.get_keyring", return_value=backend),
+            patch("keyring.get_password", return_value=None),
+            patch("keyring.delete_password") as delete_password,
+        ):
+            KeyringBackend().delete("missing")
+
+        delete_password.assert_not_called()
+
+    def test_delete_reports_backend_failure(self) -> None:
+        backend = MagicMock()
+        backend.priority = 1
+
+        with (
+            patch("keyring.get_keyring", return_value=backend),
+            patch("keyring.get_password", return_value="stored"),
+            patch("keyring.delete_password", side_effect=PermissionError("locked")),
+            pytest.raises(SecretStorageError, match="Failed to delete secret"),
+        ):
+            KeyringBackend().delete("session")
 
 
 class TestHashEmail:
@@ -92,16 +147,80 @@ class TestEncryptedFileBackend:
             backend.delete("test_key")
             assert not backend.exists("test_key")
 
-    def test_encryption_is_real(self) -> None:
-        """Test that data is actually encrypted on disk."""
+    def test_ciphertext_does_not_contain_plaintext(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             backend = EncryptedFileBackend(Path(tmpdir))
             backend.store("test_key", "secret_value")
 
-            # Check that the file doesn't contain plaintext
             for file in Path(tmpdir).glob("*.enc"):
                 content = file.read_bytes()
                 assert b"secret_value" not in content
+
+    def test_existing_store_remains_readable(self, tmp_path: Path) -> None:
+        storage_dir = tmp_path / "secrets"
+        storage_dir.mkdir()
+        encryption_key = Fernet.generate_key()
+        (storage_dir / ".key").write_bytes(encryption_key)
+        secret_path = storage_dir / f"{hashlib.sha256(b'test_key').hexdigest()}.enc"
+        secret_path.write_bytes(Fernet(encryption_key).encrypt(b"legacy_value"))
+
+        backend = EncryptedFileBackend(storage_dir)
+
+        assert backend.retrieve("test_key") == "legacy_value"
+
+    def test_failed_replace_preserves_value_and_cleans_temporary_file(self, tmp_path: Path) -> None:
+        backend = EncryptedFileBackend(tmp_path)
+        backend.store("test_key", "original")
+
+        with (
+            patch("slowlane.core.secrets.os.replace", side_effect=OSError("replace failed")),
+            pytest.raises(SecretStorageError, match="Failed to store secret"),
+        ):
+            backend.store("test_key", "replacement")
+
+        assert backend.retrieve("test_key") == "original"
+        assert list(tmp_path.glob("*.tmp")) == []
+
+    def test_failed_key_install_cleans_temporary_file(self, tmp_path: Path) -> None:
+        with (
+            patch("slowlane.core.secrets.os.link", side_effect=OSError("link failed")),
+            pytest.raises(SecretStorageError, match="Failed to initialize encrypted storage"),
+        ):
+            EncryptedFileBackend(tmp_path)
+
+        assert list(tmp_path.glob("*.tmp")) == []
+        assert not (tmp_path / ".key").exists()
+
+    def test_concurrent_key_winner_is_preserved(self, tmp_path: Path) -> None:
+        winning_key = Fernet.generate_key()
+
+        def install_winning_key(_source: Path, destination: Path) -> None:
+            Path(destination).write_bytes(winning_key)
+            raise FileExistsError
+
+        with patch("slowlane.core.secrets.os.link", side_effect=install_winning_key):
+            backend = EncryptedFileBackend(tmp_path)
+
+        backend.store("test_key", "secret_value")
+        assert (tmp_path / ".key").read_bytes() == winning_key
+        assert backend.retrieve("test_key") == "secret_value"
+        assert list(tmp_path.glob("*.tmp")) == []
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX permissions")
+    def test_storage_permissions(self, tmp_path: Path) -> None:
+        backend = EncryptedFileBackend(tmp_path)
+        backend.store("test_key", "secret_value")
+        secret_path = backend._get_secret_path("test_key")
+        key_path = tmp_path / ".key"
+
+        os.chmod(tmp_path, 0o777)
+        os.chmod(key_path, 0o666)
+        os.chmod(secret_path, 0o666)
+        EncryptedFileBackend(tmp_path)
+
+        assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+        assert stat.S_IMODE(key_path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(secret_path.stat().st_mode) == 0o600
 
 
 class TestSecretStore:

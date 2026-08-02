@@ -41,6 +41,12 @@ class AuthExpiredError(SlowlaneError):
     message = "Authentication expired"
 
 
+class AccessDeniedError(SlowlaneError):
+    """Credentials are valid but do not authorize the requested operation."""
+
+    message = "Access denied"
+
+
 class RateLimitError(SlowlaneError):
     """Apple API rate limit exceeded."""
 

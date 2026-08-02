@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.3.0] - 2026-08-02
+
+### Added
+- **CLI**: Added a top-level `--version` option and deterministic machine-readable error output.
+- **Authentication**: Added default-session selection for stored Developer Portal sessions.
+- **Security**: Added a vulnerability-reporting policy and automated dependency audits.
+
+### Changed
+- **Python**: Raised the minimum supported version to Python 3.14.
+- **Packaging**: Migrated package metadata to PEP 621, added an optional interactive-login extra, and validated installed wheels in isolation.
+- **Dependencies**: Raised vulnerable runtime dependency floors to patched releases.
+- **Authentication**: Separated App Store Connect API-key authentication from Developer Portal session authentication.
+- **Signing**: Certificate creation now requires an existing CSR so its private key remains under user control.
+- **Testing**: Expanded regression coverage and raised the enforced branch-coverage threshold from 50% to 65%.
+- **Documentation**: Reworked the README and documentation around the supported command syntax, authentication models, and configuration.
+
+### Fixed
+- **Networking**: Corrected retry behavior, bounded `Retry-After` handling, and generic HTTP error propagation.
+- **App Store Connect**: Hardened pagination links, token refresh, resource cleanup, latest-build selection, and bundle identifier resolution.
+- **Developer Portal**: Corrected response-level error detection, payload handling, session validation, and profile relationship identifiers.
+- **Uploads**: Added Transporter JWT support, asset-file uploads, secret redaction, and correct altool platform selection.
+- **Secrets**: Made encrypted-file writes atomic, cleaned up failed temporary writes, and enforced restrictive POSIX permissions.
+- **Configuration**: Rejected invalid runtime and file-based settings before they can affect requests.
+- **CI/CD**: Separated validation from tag-triggered releases and added explicit artifact handoff, package checks, and version checks.
+- **Security**: Pinned CI actions and made static analysis and dependency auditing required checks.
+
 ## [0.2.8] - 2026-04-12
 
 ### Changed
@@ -87,7 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Documentation**: Comprehensive MkDocs documentation with "Slowlane" branding.
-- **Branding**: New "Slowlane" aesthetic with custom CSS and a relaxed snail theme. 🐌
+- **Branding**: Added the original Slowlane documentation theme and custom CSS.
 - **CI/CD**: GitHub Actions workflow (`docs.yml`) for automatic documentation deployment to GitHub Pages.
 
 ### Changed

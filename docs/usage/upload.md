@@ -1,25 +1,43 @@
-# Uploading to App Store
+# Uploads
 
-Upload your binary (`.ipa` or `.pkg`) to App Store Connect.
+Slowlane validates and uploads IPA and PKG files through Apple Transporter or `altool`. Uploads require App Store Connect API-key authentication and Apple tooling that is normally available only on macOS.
 
-Slowlane uses the **iTMSTransporter** tool (on macOS) or the native API where possible to robustly upload builds.
+## Prerequisites
 
-## Upload IPA
+1. Install Xcode or the Transporter app.
+2. Configure `ASC_KEY_ID`, `ASC_ISSUER_ID`, and either `ASC_PRIVATE_KEY_PATH` or `ASC_PRIVATE_KEY`.
+3. Accept current agreements in App Store Connect.
+4. Confirm that the binary is signed for its intended distribution channel.
+
+Use `TRANSPORTER_PATH` if automatic tool discovery does not find the correct executable.
+
+## Upload an IPA
 
 ```bash
 slowlane upload ipa ./path/to/MyApp.ipa
 ```
 
-### Options
-- `--validate-only`: detailed validation without uploading.
-- `--platform`: specific platform (default: `ios`).
+Validate without uploading:
 
-## Prerequisites
-- **On macOS**: Requires Xcode or the Transporter app installed.
-- **On Linux/Windows**: Upload capabilities are limited by Apple's tooling availability. Most users perform uploads from a macOS runner in CI.
+```bash
+slowlane upload ipa ./path/to/MyApp.ipa --validate-only
+```
 
-## Troubleshooting Uploads
-If you encounter `iTMSTransporter` errors, ensure:
-1. You have accepted the latest agreements in App Store Connect.
-2. Your firewall allows connections to Apple's transporter servers.
-3. The IPA is correctly signed for **App Store Distribution** (not Development or Ad Hoc).
+By default, Slowlane validates before upload. Skip that separate validation pass only when another trusted step has already validated the artifact:
+
+```bash
+slowlane upload ipa ./path/to/MyApp.ipa --skip-validation
+```
+
+## Upload a PKG
+
+```bash
+slowlane upload pkg ./path/to/MyApp.pkg
+```
+
+## Troubleshooting
+
+- Run `slowlane spaceauth doctor` to inspect local authentication and dependency configuration.
+- Confirm that the API key role permits the requested operation.
+- Check that Xcode or Transporter is current and accessible to the CI runner.
+- Re-run with the global `--verbose` option before the upload command to collect diagnostic output without exposing credentials.
