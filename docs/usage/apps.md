@@ -1,29 +1,32 @@
-# Managing Apps
+# Apps
 
-Interact with your apps on App Store Connect.
+App commands use App Store Connect API-key authentication.
 
-## List Apps
-
-List all apps associated with your credentials:
+## List apps
 
 ```bash
 slowlane asc apps list
 ```
 
-**Options:**
-- `--limit <number>`: Limit the number of results.
-- `--platform <platform>`: Filter by platform (e.g., `IOS`).
-
-## Get App Details
-
-Get details for a specific app by its Bundle ID or Apple ID:
+Limit the number of returned records:
 
 ```bash
-slowlane asc apps get com.example.my-app
-# OR
-slowlane asc apps get 1234567890
+slowlane asc apps list --limit 25
 ```
 
-## Create App
+Request structured output with the global option:
 
-*Currently, creating apps is done via the web interface to ensure all metadata is correctly properly set up initially.*
+```bash
+slowlane --json asc apps list
+```
+
+## Get an app
+
+Pass the App Store Connect resource ID returned by `apps list`, or a bundle ID:
+
+```bash
+slowlane asc apps get APP_RESOURCE_ID
+slowlane asc apps get com.example.app
+```
+
+The command displays the app name, resource ID, bundle ID, SKU, and primary locale when those values are present in the API response.

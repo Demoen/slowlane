@@ -23,8 +23,8 @@ What actually happened.
 
 ## Environment
 - OS: [e.g., macOS 14.2, Ubuntu 22.04, Windows 11]
-- Python version: [e.g., 3.11.5]
-- slowlane version: [e.g., 0.1.0]
+- Python version: [e.g., 3.14.5]
+- Slowlane version: [e.g., x.y.z]
 
 ## Additional Context
 Add any other context about the problem here.

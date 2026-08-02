@@ -1,53 +1,52 @@
-# Slowlane 🐌
+# Slowlane
 
-<div class="hero-snail">🐌</div>
+Slowlane is a Python command-line application for automating selected App Store Connect and Apple Developer Portal workflows.
 
-**"Life in the fastlane is clear, but the slowlane is where the scenery is."**
+[![CI/CD](https://github.com/Demoen/slowlane/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/Demoen/slowlane/actions/workflows/ci-cd.yml)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](https://github.com/Demoen/slowlane/blob/main/LICENSE)
 
-*Production-grade Python CLI tool for Apple service automation. A chill, fastlane-compatible solution for authentication and App Store Connect/Developer Portal operations.*
+## Capabilities
 
-!!! tip
-    Why rush? Slowlane gets you there... eventually. (Actually it's quite fast, but we like to take our time with quality).
+- Authenticate App Store Connect commands with an API key and Developer Portal commands with an Apple ID session.
+- List apps, builds, TestFlight testers, and TestFlight groups.
+- Invite TestFlight testers to beta groups.
+- Manage Developer Portal certificates and provisioning profiles.
+- Validate and upload IPA and PKG files through Apple Transporter.
+- Produce JSON output for automation and CI workflows.
 
-[![CI](https://github.com/Demoen/slowlane/actions/workflows/ci.yml/badge.svg)](https://github.com/Demoen/slowlane/actions/workflows/ci.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+Developer Portal commands use Apple's private web-service endpoints and can require updates when Apple changes those services. Upload commands require Apple tooling that is normally available only on macOS.
 
-## Features
-
-- 🔐 **Multiple auth modes**: JWT API keys, session cookies, interactive login
-- 📱 **App Store Connect**: Apps, builds, TestFlight management
-- 🔏 **Developer Portal**: Certificates and provisioning profiles
-- 📦 **Upload**: IPA upload via iTunes Transporter
-- 🔄 **CI-friendly**: Works on macOS, Linux, Windows with structured output
-
-## Quick Start
-
-### Using API Key (Recommended for CI)
+## Install
 
 ```bash
-# Set environment variables
+python -m pip install slowlane
+```
+
+Interactive Apple ID login requires the optional browser dependency:
+
+```bash
+python -m pip install "slowlane[interactive]"
+python -m playwright install chromium
+```
+
+## API-key example
+
+```bash
 export ASC_KEY_ID="XXXXXXXXXX"
 export ASC_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-export ASC_PRIVATE_KEY="$(cat AuthKey_XXXXXXXXXX.p8)"
+export ASC_PRIVATE_KEY_PATH="/absolute/path/to/AuthKey_XXXXXXXXXX.p8"
 
-# List your apps
 slowlane asc apps list
-
-# Upload an IPA
-slowlane upload ipa ./MyApp.ipa
+slowlane --json asc builds list --app APP_RESOURCE_ID
 ```
 
-### Using Session Auth
+## Session example
 
 ```bash
-# Interactive login (opens browser)
-slowlane spaceauth login
-
-# Export session for CI
-slowlane spaceauth export
-
-# Use session in CI
-export FASTLANE_SESSION="..."
-slowlane asc apps list
+slowlane spaceauth login --service developer --email developer@example.com
+slowlane spaceauth verify --email developer@example.com
+slowlane spaceauth export --email developer@example.com
 ```
+
+Continue with [Installation](installation.md), [Authentication](authentication.md), or the [CLI reference](cli.md).

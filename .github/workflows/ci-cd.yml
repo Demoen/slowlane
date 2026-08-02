@@ -5,319 +5,234 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cd-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PYTHON_VERSION: "3.14"
 
 jobs:
   test:
-    name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    name: Test on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(github.actor == 'dependabot[bot]' && '{"os":["ubuntu-latest"],"python-version":["3.11"]}' || '{"os":["ubuntu-latest","macos-latest","windows-latest"],"python-version":["3.11","3.12","3.13","3.14"]}') }}
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          python-version: ${{ matrix.python-version }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Poetry
-        run: |
-          pip install poetry==1.8.5
-          poetry config virtualenvs.create true
-          poetry config virtualenvs.in-project true
-
-      - name: Load cached venv
-        id: cached-poetry-dependencies
-        uses: actions/cache@v5
-        with:
-          path: .venv
-          key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock', '**/pyproject.toml') }}
-
-      - name: Install dependencies
-        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
-        run: poetry install --no-interaction --no-root
+        run: python -m pip install "poetry==2.4.1"
 
       - name: Install project
-        run: poetry install --no-interaction
+        run: poetry install --no-interaction --all-extras
 
       - name: Run tests
         run: poetry run pytest tests/ --tb=short -q --no-cov
 
   lint:
-    name: Lint & Type Check
+    name: Lint and type check
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Poetry
-        run: |
-          pip install poetry==1.8.5
-          poetry config virtualenvs.create true
-          poetry config virtualenvs.in-project true
-
-      - name: Load cached venv
-        id: cached-poetry-dependencies
-        uses: actions/cache@v5
-        with:
-          path: .venv
-          key: venv-${{ runner.os }}-lint-${{ hashFiles('**/poetry.lock', '**/pyproject.toml') }}
-
-      - name: Install dependencies
-        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
-        run: poetry install --no-interaction
+        run: python -m pip install "poetry==2.4.1"
 
       - name: Install project
-        run: poetry install --no-interaction
+        run: poetry install --no-interaction --all-extras
 
-      - name: Run ruff linting
-        run: poetry run ruff check src/ --ignore B008
+      - name: Validate project metadata and lock file
+        run: poetry check --lock
 
-      - name: Run ruff formatting check
-        run: poetry run ruff format src/ --check
+      - name: Run Ruff
+        run: poetry run ruff check src/ tests/
 
-      - name: Run mypy type checking
-        run: poetry run mypy src/slowlane --ignore-missing-imports
+      - name: Check formatting
+        run: poetry run ruff format src/ tests/ --check
+
+      - name: Run mypy
+        run: poetry run mypy src/slowlane
 
   coverage:
-    name: Coverage Report
+    name: Coverage
     runs-on: ubuntu-latest
     needs: test
-    if: github.event_name == 'push' || github.actor != 'dependabot[bot]'
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Poetry
-        run: |
-          pip install poetry==1.8.5
-          poetry config virtualenvs.create true
-          poetry config virtualenvs.in-project true
-
-      - name: Load cached venv
-        id: cached-poetry-dependencies
-        uses: actions/cache@v5
-        with:
-          path: .venv
-          key: venv-${{ runner.os }}-coverage-${{ hashFiles('**/poetry.lock', '**/pyproject.toml') }}
-
-      - name: Install dependencies
-        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
-        run: poetry install --no-interaction
+        run: python -m pip install "poetry==2.4.1"
 
       - name: Install project
-        run: poetry install --no-interaction
+        run: poetry install --no-interaction --all-extras
 
       - name: Run tests with coverage
         run: poetry run pytest tests/ --cov=src/slowlane --cov-report=xml --cov-report=term-missing --no-cov-on-fail
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+      - name: Upload coverage
+        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
           fail_ci_if_error: false
-          verbose: true
-        continue-on-error: true
 
   security:
-    name: Security Scan
+    name: Security
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Poetry
-        run: |
-          pip install poetry==1.8.5
-          poetry config virtualenvs.create true
-          poetry config virtualenvs.in-project true
+        run: python -m pip install "poetry==2.4.1"
 
-      - name: Install dependencies
-        run: poetry install --no-interaction
+      - name: Install project and security tools
+        run: poetry install --no-interaction --all-extras --with security
 
-      - name: Install security tools
-        run: pip install bandit pip-audit
+      - name: Run Bandit
+        run: poetry run bandit -r src/ -ll -ii
 
-      - name: Run Bandit security linter
-        run: poetry run bandit -r src/ -ll -ii -x tests
-        continue-on-error: true
+      - name: Audit installed dependencies
+        run: poetry run pip-audit --local --progress-spinner off
 
-      - name: Export requirements for pip-audit
-        run: poetry export -f requirements.txt --output requirements.txt --without-hashes
-        continue-on-error: true
-
-      - name: Run pip-audit for vulnerabilities
-        run: pip-audit -r requirements.txt
-        continue-on-error: true
-
-  tag:
-    name: Create Version Tag
+  docs:
+    name: Documentation
     runs-on: ubuntu-latest
-    needs: [test, lint, security]
-    if: >
-      github.event_name == 'push' &&
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-    permissions:
-      contents: write
-    outputs:
-      created: ${{ steps.create-tag.outputs.created }}
-      tag: ${{ steps.create-tag.outputs.tag }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          fetch-depth: 0
-
-      - name: Create tag if version is new
-        id: create-tag
-        run: |
-          VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          TAG="v$VERSION"
-          if git ls-remote --tags origin "$TAG" | grep -q "$TAG"; then
-            echo "Tag $TAG already exists, skipping"
-            echo "created=false" >> $GITHUB_OUTPUT
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag "$TAG"
-            git push origin "$TAG"
-            echo "created=true" >> $GITHUB_OUTPUT
-            echo "tag=$TAG" >> $GITHUB_OUTPUT
-          fi
-
-  build:
-    name: Build distribution
-    runs-on: ubuntu-latest
-    needs: tag
-    if: needs.tag.outputs.created == 'true'
-
-    steps:
-      - uses: actions/checkout@v6
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Poetry
-        run: pip install poetry==1.8.5
+        run: python -m pip install "poetry==2.4.1"
 
-      - name: Build package
+      - name: Install documentation dependencies
+        run: poetry install --no-interaction --with docs
+
+      - name: Build documentation
+        run: poetry run mkdocs build --strict
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    needs: [lint, coverage, security, docs]
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        run: python -m pip install "poetry==2.4.1"
+
+      - name: Install release tools
+        run: poetry install --no-interaction --with release
+
+      - name: Build distributions
         run: poetry build
 
-      - name: Install twine for checking
-        run: pip install twine
+      - name: Validate distributions
+        run: poetry run twine check dist/*
 
-      - name: Check package
-        run: twine check dist/*
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v6
-        with:
-          name: dist
-          path: dist/
-
-  release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
-    needs: build
-    permissions:
-      contents: write
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Extract Release Notes
-        id: extract-notes
+      - name: Smoke test wheel
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          sed -n "/## \[$VERSION\]/,/## \[/p" CHANGELOG.md | sed '1d;$d' > release_notes.md
-          if [ ! -s release_notes.md ]; then
-            echo "Release $VERSION" > release_notes.md
-          fi
+          python -m venv .package-smoke
+          .package-smoke/bin/python -m pip install dist/*.whl
+          .package-smoke/bin/slowlane version
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+      - name: Upload distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          tag_name: ${{ needs.tag.outputs.tag }}
-          body_path: release_notes.md
-          files: |
-            dist/*.whl
-            dist/*.tar.gz
-
-  publish:
-    name: Publish to PyPI
-    runs-on: ubuntu-latest
-    needs: release
-    environment:
-      name: pypi
-      url: https://pypi.org/project/slowlane/
-    permissions:
-      id-token: write
-
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: dist
+          name: dist-${{ github.sha }}-${{ github.run_attempt }}
           path: dist/
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+          if-no-files-found: error
+          retention-days: 7
 
   deploy-docs:
-    name: Deploy Docs
+    name: Deploy documentation
     runs-on: ubuntu-latest
-    needs: [test, lint, security]
-    if: >
+    needs: package
+    if: >-
       github.event_name == 'push' &&
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     permissions:
-      contents: write
+      contents: write # Required to publish the GitHub Pages branch.
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
-      - name: Configure Git Credentials
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        run: python -m pip install "poetry==2.4.1"
+
+      - name: Install documentation dependencies
+        run: poetry install --no-interaction --with docs
+
+      - name: Configure Git credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          gh auth setup-git
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: 3.x
-
-      - name: Get cache id
-        id: cache
-        run: echo "id=$(date --utc '+%V')" >> $GITHUB_OUTPUT
-
-      - uses: actions/cache@v4
-        with:
-          key: mkdocs-material-${{ steps.cache.outputs.id }}
-          path: .cache
-          restore-keys: |
-            mkdocs-material-
-
-      - run: pip install mkdocs-material
-
-      - run: mkdocs gh-deploy --force
+      - name: Deploy documentation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: poetry run mkdocs gh-deploy --force

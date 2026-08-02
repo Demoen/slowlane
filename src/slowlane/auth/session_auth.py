@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import os
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import ClassVar
 
+from slowlane.core.errors import SessionError
 from slowlane.core.secrets import SecretStore, SessionData, hash_email
+
+REQUIRED_SESSION_COOKIES = ("myacinfo", "DES")
 
 
 @dataclass
@@ -26,45 +30,53 @@ class SessionCredentials:
 
         The FASTLANE_SESSION format is base64-encoded JSON containing cookies.
         """
-        session_str = os.environ.get("FASTLANE_SESSION")
-        if not session_str:
+        if "FASTLANE_SESSION" not in os.environ:
             return None
+        session_str = os.environ["FASTLANE_SESSION"]
+        if not session_str:
+            raise SessionError("FASTLANE_SESSION is set but empty")
 
         try:
-            # Try base64 decode first
-            try:
-                decoded = base64.b64decode(session_str).decode("utf-8")
-                data = json.loads(decoded)
-            except Exception:
-                # Fall back to direct JSON
-                data = json.loads(session_str)
+            decoded = base64.b64decode(session_str, validate=True).decode("utf-8")
+            data = json.loads(decoded)
+        except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise SessionError("FASTLANE_SESSION is not valid exported session data") from exc
 
-            cookies = data.get("cookies", data)
-            email_hash = data.get("email_hash", "unknown")
-            created_at_str = data.get("created_at")
+        if not isinstance(data, dict):
+            raise SessionError("FASTLANE_SESSION must contain a session object")
 
-            if created_at_str:
-                created_at = datetime.fromisoformat(created_at_str)
-            else:
-                created_at = datetime.now(UTC)
+        cookies = data.get("cookies")
+        email_hash = data.get("email_hash")
+        created_at_raw = data.get("created_at")
+        if not isinstance(cookies, dict) or not cookies:
+            raise SessionError("FASTLANE_SESSION does not contain valid cookies")
+        if any(
+            not isinstance(key, str) or not key or not isinstance(value, str) or not value
+            for key, value in cookies.items()
+        ):
+            raise SessionError("FASTLANE_SESSION contains invalid cookie values")
+        if any(cookie not in cookies for cookie in REQUIRED_SESSION_COOKIES):
+            raise SessionError("FASTLANE_SESSION is missing required Apple cookies")
+        if not isinstance(email_hash, str) or not email_hash:
+            raise SessionError("FASTLANE_SESSION does not contain a valid account identifier")
+        if not isinstance(created_at_raw, str):
+            raise SessionError("FASTLANE_SESSION does not contain a valid creation timestamp")
 
-            if isinstance(cookies, dict):
-                return cls(
-                    cookies=cookies,
-                    email_hash=email_hash,
-                    created_at=created_at,
-                )
-        except Exception:
-            pass
+        try:
+            created_at = datetime.fromisoformat(created_at_raw)
+        except ValueError as exc:
+            raise SessionError("FASTLANE_SESSION has an invalid creation timestamp") from exc
+        if created_at.tzinfo is None or created_at.utcoffset() is None:
+            raise SessionError("FASTLANE_SESSION creation timestamp must include a timezone")
 
-        return None
+        return cls(cookies=cookies, email_hash=email_hash, created_at=created_at)
 
 
 class SessionAuth:
     """Session-based authentication manager."""
 
     # Required cookies for Apple session
-    REQUIRED_COOKIES: ClassVar[list[str]] = ["myacinfo", "DES"]
+    REQUIRED_COOKIES: ClassVar[tuple[str, ...]] = REQUIRED_SESSION_COOKIES
 
     # Session considered stale after 7 days
     STALE_THRESHOLD_DAYS = 7
@@ -90,8 +102,13 @@ class SessionAuth:
     @property
     def is_stale(self) -> bool:
         """Check if session is stale and should be refreshed."""
-        age = datetime.now(UTC) - self._session_data.created_at.replace(tzinfo=UTC)
-        return age.days >= self.STALE_THRESHOLD_DAYS
+        created_at = self._session_data.created_at
+        if created_at.tzinfo is None or created_at.utcoffset() is None:
+            created_at = created_at.replace(tzinfo=UTC)
+        else:
+            created_at = created_at.astimezone(UTC)
+        age = datetime.now(UTC) - created_at
+        return age >= timedelta(days=self.STALE_THRESHOLD_DAYS)
 
     def validate(self) -> bool:
         """Basic validation of session cookies."""
@@ -111,10 +128,16 @@ def get_session_auth(
     """Get session auth from environment or secret store.
 
     Priority:
-    1. FASTLANE_SESSION environment variable
-    2. Stored session for email
+    1. Explicitly requested stored account
+    2. FASTLANE_SESSION environment variable
+    3. Default stored account
     """
-    # Try environment first
+    if email:
+        if secret_store is None:
+            return None
+        stored = secret_store.retrieve_session(email)
+        return SessionAuth(stored) if stored else None
+
     creds = SessionCredentials.from_env()
     if creds:
         session_data = SessionData(
@@ -124,9 +147,8 @@ def get_session_auth(
         )
         return SessionAuth(session_data)
 
-    # Try secret store
-    if email and secret_store:
-        stored = secret_store.retrieve_session(email)
+    if secret_store:
+        stored = secret_store.retrieve_default_session()
         if stored:
             return SessionAuth(stored)
 

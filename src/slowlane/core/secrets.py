@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import json
 import os
+import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -94,8 +95,11 @@ class KeyringBackend(SecretBackend):
             import keyring
 
             self._keyring = keyring
-            # Test if keyring is functional
-            keyring.get_keyring()
+            backend = keyring.get_keyring()
+            if backend.priority <= 0:
+                raise SecretStorageError(f"Keyring backend is not usable: {type(backend).__name__}")
+        except SecretStorageError:
+            raise
         except Exception as e:
             raise SecretStorageError(f"Keyring not available: {e}") from e
 
@@ -115,8 +119,12 @@ class KeyringBackend(SecretBackend):
 
     def delete(self, key: str) -> None:
         """Delete a secret from the keychain."""
-        with contextlib.suppress(Exception):
+        if self.retrieve(key) is None:
+            return
+        try:
             self._keyring.delete_password(self.SERVICE_NAME, key)
+        except Exception as e:
+            raise SecretStorageError(f"Failed to delete secret: {e}", key=key) from e
 
     def exists(self, key: str) -> bool:
         """Check if a secret exists in the keychain."""
@@ -124,12 +132,75 @@ class KeyringBackend(SecretBackend):
 
 
 class EncryptedFileBackend(SecretBackend):
-    """Store secrets in encrypted files (fallback when keyring unavailable)."""
+    """Encrypt fallback files with a colocated, permission-restricted key.
+
+    This does not protect against processes running as the same account.
+    """
 
     def __init__(self, storage_dir: Path | None = None) -> None:
         self._storage_dir = storage_dir or get_data_dir() / "secrets"
-        self._storage_dir.mkdir(parents=True, exist_ok=True)
-        self._fernet = self._get_fernet()
+        try:
+            self._storage_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self._set_permissions(self._storage_dir, 0o700)
+            for secret_path in self._storage_dir.glob("*.enc"):
+                if secret_path.is_file():
+                    self._set_permissions(secret_path, 0o600)
+            self._fernet = self._get_fernet()
+        except SecretStorageError:
+            raise
+        except Exception as e:
+            raise SecretStorageError(f"Failed to initialize encrypted storage: {e}") from e
+
+    @staticmethod
+    def _set_permissions(path: Path, mode: int) -> None:
+        if os.name == "posix":
+            os.chmod(path, mode)
+
+    def _sync_storage_dir(self) -> None:
+        if os.name != "posix":
+            return
+
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        with contextlib.suppress(OSError):
+            directory_fd = os.open(self._storage_dir, flags)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+
+    def _write_temporary_file(self, data: bytes, prefix: str) -> Path:
+        file_descriptor, temporary_name = tempfile.mkstemp(
+            dir=self._storage_dir,
+            prefix=prefix,
+            suffix=".tmp",
+        )
+        temporary_path = Path(temporary_name)
+
+        try:
+            if os.name == "posix":
+                os.fchmod(file_descriptor, 0o600)
+            with os.fdopen(file_descriptor, "wb") as temporary_file:
+                file_descriptor = -1
+                temporary_file.write(data)
+                temporary_file.flush()
+                os.fsync(temporary_file.fileno())
+            return temporary_path
+        except Exception:
+            if file_descriptor >= 0:
+                with contextlib.suppress(OSError):
+                    os.close(file_descriptor)
+            with contextlib.suppress(OSError):
+                temporary_path.unlink()
+            raise
+
+    def _atomic_write(self, path: Path, data: bytes) -> None:
+        temporary_path = self._write_temporary_file(data, f".{path.name}.")
+        try:
+            os.replace(temporary_path, path)
+            self._sync_storage_dir()
+        finally:
+            with contextlib.suppress(OSError):
+                temporary_path.unlink()
 
     def _get_encryption_key_path(self) -> Path:
         """Get path to encryption key file."""
@@ -150,18 +221,23 @@ class EncryptedFileBackend(SecretBackend):
         key_path = self._get_encryption_key_path()
 
         if key_path.exists():
-            # Load existing key
-            with open(key_path, "rb") as f:
-                key = f.read()
+            self._set_permissions(key_path, 0o600)
         else:
-            # Generate new key
-            key = Fernet.generate_key()
-            with open(key_path, "wb") as f:
-                f.write(key)
-            # Restrict permissions (best effort on Windows)
-            with contextlib.suppress(Exception):
-                os.chmod(key_path, 0o600)
+            temporary_path = self._write_temporary_file(Fernet.generate_key(), ".key.")
+            try:
+                try:
+                    os.link(temporary_path, key_path)
+                except FileExistsError:
+                    pass
+                else:
+                    self._sync_storage_dir()
+            finally:
+                with contextlib.suppress(OSError):
+                    temporary_path.unlink()
 
+            self._set_permissions(key_path, 0o600)
+
+        key = key_path.read_bytes()
         return Fernet(key)
 
     def _get_secret_path(self, key: str) -> Path:
@@ -174,8 +250,7 @@ class EncryptedFileBackend(SecretBackend):
         try:
             encrypted = self._fernet.encrypt(value.encode())
             path = self._get_secret_path(key)
-            with open(path, "wb") as f:
-                f.write(encrypted)
+            self._atomic_write(path, encrypted)
         except Exception as e:
             raise SecretStorageError(f"Failed to store secret: {e}", key=key) from e
 
@@ -206,6 +281,8 @@ class EncryptedFileBackend(SecretBackend):
 class SecretStore:
     """High-level secret storage with automatic backend selection."""
 
+    DEFAULT_SESSION_KEY = "session:default"
+
     def __init__(self, backend: SecretBackend | None = None) -> None:
         if backend is not None:
             self._backend = backend
@@ -234,6 +311,7 @@ class SecretStore:
         session.email_hash = email_hash
         data = json.dumps(session.to_dict())
         self._backend.store(f"session:{email_hash}", data)
+        self._backend.store(self.DEFAULT_SESSION_KEY, email_hash)
 
     def retrieve_session(self, email: str) -> SessionData | None:
         """Retrieve session data for an account."""
@@ -250,10 +328,19 @@ class SecretStore:
             return None
         return SessionData.from_dict(json.loads(data))
 
+    def retrieve_default_session(self) -> SessionData | None:
+        """Retrieve the most recently stored session."""
+        email_hash = self._backend.retrieve(self.DEFAULT_SESSION_KEY)
+        if not email_hash:
+            return None
+        return self.retrieve_session_by_hash(email_hash)
+
     def delete_session(self, email: str) -> None:
         """Delete session data for an account."""
         email_hash = hash_email(email)
         self._backend.delete(f"session:{email_hash}")
+        if self._backend.retrieve(self.DEFAULT_SESSION_KEY) == email_hash:
+            self._backend.delete(self.DEFAULT_SESSION_KEY)
 
     def update_session_verified(self, email: str) -> None:
         """Update session's last verified timestamp."""

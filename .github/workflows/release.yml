@@ -1,0 +1,303 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.14"
+
+jobs:
+  test:
+    name: Release tests on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        run: python -m pip install "poetry==2.4.1"
+
+      - name: Install project
+        run: poetry install --no-interaction --all-extras
+
+      - name: Run tests with coverage
+        run: poetry run pytest tests/ --tb=short -q
+
+  build:
+    name: Verify and build
+    runs-on: ubuntu-latest
+    needs: test
+    outputs:
+      artifact_id: ${{ steps.distributions.outputs.artifact-id }}
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        run: python -m pip install "poetry==2.4.1"
+
+      - name: Install project and validation tools
+        run: poetry install --no-interaction --all-extras --with docs,release,security
+
+      - name: Verify release versions
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION=$(poetry version --short)
+          RUNTIME_VERSION=$(poetry run python -c "from slowlane import __version__; print(__version__)")
+          test "$GITHUB_REF_NAME" = "v$TAG_VERSION"
+          test "$TAG_VERSION" = "$PACKAGE_VERSION"
+          test "$TAG_VERSION" = "$RUNTIME_VERSION"
+          awk -v heading="## [$TAG_VERSION]" '
+            $0 == heading || index($0, heading " - ") == 1 { found = 1 }
+            END { exit !found }
+          ' CHANGELOG.md
+
+      - name: Validate project metadata and lock file
+        run: poetry check --lock
+
+      - name: Run static checks
+        run: |
+          poetry run ruff check src/ tests/
+          poetry run ruff format src/ tests/ --check
+          poetry run mypy src/slowlane
+
+      - name: Run security checks
+        run: |
+          poetry run bandit -q -r src/ -ll -ii
+          poetry run pip-audit --local --progress-spinner off
+
+      - name: Build documentation
+        run: poetry run mkdocs build --strict
+
+      - name: Configure reproducible build timestamp
+        shell: bash
+        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
+
+      - name: Build distributions
+        run: poetry build
+
+      - name: Validate distributions
+        run: poetry run twine check dist/*
+
+      - name: Smoke test wheel
+        run: |
+          python -m venv .package-smoke
+          .package-smoke/bin/python -m pip install dist/*.whl
+          .package-smoke/bin/slowlane version
+
+      - name: Upload distributions
+        id: distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dist-${{ github.sha }}-${{ github.run_attempt }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  verify_artifacts:
+    name: Verify existing release artifacts
+    runs-on: ubuntu-latest
+    needs: build
+    outputs:
+      publish_to_pypi: ${{ steps.pypi.outputs.publish }}
+
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          path: dist/
+
+      - name: Check PyPI artifacts
+        id: pypi
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          RESPONSE=$(mktemp)
+          STATUS=$(curl --silent --show-error --location \
+            --output "$RESPONSE" \
+            --write-out "%{http_code}" \
+            "https://pypi.org/pypi/slowlane/$VERSION/json")
+
+          if [ "$STATUS" = "404" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          elif [ "$STATUS" = "200" ]; then
+            LOCAL_MANIFEST=$(mktemp)
+            PYPI_MANIFEST=$(mktemp)
+            (cd dist && sha256sum -- *.whl *.tar.gz | LC_ALL=C sort -k2) > "$LOCAL_MANIFEST"
+            jq -r '.urls[]
+              | select(.packagetype == "bdist_wheel" or .packagetype == "sdist")
+              | "\(.digests.sha256)  \(.filename)"' "$RESPONSE" \
+              | LC_ALL=C sort -k2 > "$PYPI_MANIFEST"
+            diff -u "$LOCAL_MANIFEST" "$PYPI_MANIFEST"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "PyPI returned HTTP $STATUS" >&2
+            cat "$RESPONSE" >&2
+            exit 1
+          fi
+
+      - name: Check GitHub release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          RESPONSE=$(mktemp)
+          STATUS=$(curl --silent --show-error --location \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            --output "$RESPONSE" \
+            --write-out "%{http_code}" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")
+
+          if [ "$STATUS" = "404" ]; then
+            exit 0
+          fi
+          if [ "$STATUS" != "200" ]; then
+            echo "GitHub returned HTTP $STATUS" >&2
+            cat "$RESPONSE" >&2
+            exit 1
+          fi
+          if [ "$(jq -r '.draft' "$RESPONSE")" != "false" ]; then
+            echo "An existing draft release must be resolved before publishing" >&2
+            exit 1
+          fi
+
+          EXISTING_DIR=$(mktemp -d)
+          LOCAL_MANIFEST=$(mktemp)
+          GITHUB_MANIFEST=$(mktemp)
+          gh release download "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir "$EXISTING_DIR" \
+            --pattern '*.whl' \
+            --pattern '*.tar.gz'
+          (cd dist && sha256sum -- *.whl *.tar.gz | LC_ALL=C sort -k2) > "$LOCAL_MANIFEST"
+          (cd "$EXISTING_DIR" && sha256sum -- *.whl *.tar.gz | LC_ALL=C sort -k2) \
+            > "$GITHUB_MANIFEST"
+          diff -u "$LOCAL_MANIFEST" "$GITHUB_MANIFEST"
+
+  publish:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: [build, verify_artifacts]
+    environment:
+      name: pypi
+      url: https://pypi.org/project/slowlane/
+    permissions:
+      id-token: write # Required for PyPI trusted publishing.
+
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          path: dist/
+
+      - name: Publish distributions
+        if: needs.verify_artifacts.outputs.publish_to_pypi == 'true'
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+
+      - name: Confirm existing publication
+        if: needs.verify_artifacts.outputs.publish_to_pypi != 'true'
+        run: echo "PyPI already contains distributions with matching SHA-256 hashes."
+
+  release:
+    name: GitHub release
+    runs-on: ubuntu-latest
+    needs: [build, verify_artifacts, publish]
+    permissions:
+      contents: write # Required to create a GitHub Release.
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Download distributions
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          path: dist/
+
+      - name: Extract release notes
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v heading="## [$VERSION]" '
+            $0 == heading || index($0, heading " - ") == 1 { found = 1; next }
+            found && index($0, "## [") == 1 { exit }
+            found { print }
+          ' CHANGELOG.md > release_notes.md
+          grep -q '[^[:space:]]' release_notes.md
+
+      - name: Create or verify GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          RESPONSE=$(mktemp)
+          STATUS=$(curl --silent --show-error --location \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            --output "$RESPONSE" \
+            --write-out "%{http_code}" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")
+
+          if [ "$STATUS" = "404" ]; then
+            gh release create "$GITHUB_REF_NAME" dist/*.whl dist/*.tar.gz \
+              --verify-tag --title "$GITHUB_REF_NAME" --notes-file release_notes.md
+            exit 0
+          fi
+          if [ "$STATUS" != "200" ]; then
+            echo "GitHub returned HTTP $STATUS" >&2
+            cat "$RESPONSE" >&2
+            exit 1
+          fi
+          if [ "$(jq -r '.draft' "$RESPONSE")" != "false" ]; then
+            echo "An existing draft release must be resolved before publishing" >&2
+            exit 1
+          fi
+
+          EXISTING_DIR=$(mktemp -d)
+          LOCAL_MANIFEST=$(mktemp)
+          GITHUB_MANIFEST=$(mktemp)
+          gh release download "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir "$EXISTING_DIR" \
+            --pattern '*.whl' \
+            --pattern '*.tar.gz'
+          (cd dist && sha256sum -- *.whl *.tar.gz | LC_ALL=C sort -k2) > "$LOCAL_MANIFEST"
+          (cd "$EXISTING_DIR" && sha256sum -- *.whl *.tar.gz | LC_ALL=C sort -k2) \
+            > "$GITHUB_MANIFEST"
+          diff -u "$LOCAL_MANIFEST" "$GITHUB_MANIFEST"

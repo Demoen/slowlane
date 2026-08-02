@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from slowlane.auth.jwt_auth import JWTAuth
 from slowlane.auth.session_auth import SessionAuth
 from slowlane.core.base_client import BaseAppleClient
 from slowlane.core.config import SlowlaneConfig
+from slowlane.core.errors import AppStoreConnectError
 
 
 class AppStoreConnectClient(BaseAppleClient):
@@ -15,20 +17,41 @@ class AppStoreConnectClient(BaseAppleClient):
 
     BASE_URL = "https://api.appstoreconnect.apple.com/v1"
 
+    @classmethod
+    def _validate_pagination_url(cls, url: str) -> None:
+        try:
+            parsed = urlsplit(url)
+            port = parsed.port
+        except (TypeError, ValueError) as exc:
+            raise AppStoreConnectError("Invalid App Store Connect pagination URL") from exc
+
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "api.appstoreconnect.apple.com"
+            or port not in (None, 443)
+            or parsed.username is not None
+            or parsed.password is not None
+            or (parsed.path != "/v1" and not parsed.path.startswith("/v1/"))
+        ):
+            raise AppStoreConnectError("Refusing pagination URL outside App Store Connect")
+
     def __init__(
         self,
         jwt_auth: JWTAuth | None = None,
         session_auth: SessionAuth | None = None,
         config: SlowlaneConfig | None = None,
     ) -> None:
+        if jwt_auth is None:
+            raise AppStoreConnectError(
+                "App Store Connect API requests require API key authentication"
+            )
+
         super().__init__(config)
         self._jwt_auth = jwt_auth
         self._session_auth = session_auth
 
-        if jwt_auth:
-            self._http.set_jwt_token(jwt_auth.get_token())
-        elif session_auth:
-            self._http.set_cookies(session_auth.cookies)
+        self._http.set_jwt_token_provider(jwt_auth.get_token)
+        self._http.set_jwt_token(jwt_auth.get_token())
 
     def _refresh_token_if_needed(self) -> None:
         if self._jwt_auth:
@@ -51,24 +74,38 @@ class AppStoreConnectClient(BaseAppleClient):
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         """Fetch all pages of results up to limit."""
-        params = params or {}
+        if limit <= 0:
+            return []
+
+        params = dict(params or {})
         params["limit"] = min(limit, 200)  # API max is 200
 
         all_data: list[dict[str, Any]] = []
         next_url: str | None = f"{self.BASE_URL}/{endpoint}"
+        request_params: dict[str, Any] | None = params
+        visited_urls: set[str] = set()
 
         while next_url and len(all_data) < limit:
+            self._validate_pagination_url(next_url)
+            if next_url in visited_urls:
+                raise AppStoreConnectError("App Store Connect pagination repeated a page URL")
+            visited_urls.add(next_url)
             self._refresh_token_if_needed()
-            response = self._http.get_json(
-                next_url, params=params if next_url.startswith(self.BASE_URL) else None
-            )
+            response = self._http.get_json(next_url, params=request_params or None)
+            request_params = None
 
             data = response.get("data", [])
+            if not isinstance(data, list):
+                raise AppStoreConnectError("Invalid data in App Store Connect response")
             all_data.extend(data)
 
             links = response.get("links", {})
-            next_url = links.get("next")
-            params = {}  # Params are included in next URL
+            if not isinstance(links, dict):
+                raise AppStoreConnectError("Invalid pagination links in App Store Connect response")
+            next_value = links.get("next")
+            if next_value is not None and not isinstance(next_value, str):
+                raise AppStoreConnectError("Invalid App Store Connect pagination URL")
+            next_url = next_value
 
         return all_data[:limit]
 
@@ -102,7 +139,11 @@ class AppStoreConnectClient(BaseAppleClient):
         return cast(dict[str, Any], response.get("data", {}))
 
     def get_latest_build(self, app_id: str) -> dict[str, Any] | None:
-        builds = self.list_builds(app_id=app_id, limit=1)
+        builds = self._paginate(
+            "builds",
+            params={"filter[app]": app_id, "sort": "-uploadedDate"},
+            limit=1,
+        )
         return builds[0] if builds else None
 
     # TestFlight
@@ -159,6 +200,7 @@ class AppStoreConnectClient(BaseAppleClient):
 
     def add_tester_to_group(self, tester_id: str, group_id: str) -> None:
         data = {"data": [{"type": "betaTesters", "id": tester_id}]}
+        self._refresh_token_if_needed()
         self._http.post(
             f"{self.BASE_URL}/betaGroups/{group_id}/relationships/betaTesters",
             json=data,

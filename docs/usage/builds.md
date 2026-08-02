@@ -1,45 +1,50 @@
-# Builds & TestFlight
+# Builds and TestFlight
 
-Manage your builds and TestFlight beta testing.
+These commands use App Store Connect API-key authentication.
 
 ## Builds
 
-### List Builds
-List all builds for a specific app:
+List builds across accessible apps:
 
 ```bash
-slowlane asc builds list com.example.my-app
+slowlane asc builds list
 ```
 
-### Get Latest Build
-Find the latest build number for a specific version or the latest overall:
+Filter by an App Store Connect app resource ID and limit the result count:
 
 ```bash
-slowlane asc builds latest com.example.my-app
+slowlane asc builds list --app APP_RESOURCE_ID --limit 25
 ```
 
-## TestFlight
-
-### Testers
-List all beta testers:
+Get the latest build returned for an app:
 
 ```bash
-slowlane asc testflight testers list
+slowlane asc builds latest APP_RESOURCE_ID
 ```
 
-Invite a tester to a group:
+## TestFlight testers
+
+List testers, optionally filtered by app:
 
 ```bash
-slowlane asc testflight invite \
-  --email new.tester@example.com \
-  --first-name John \
-  --last-name Doe \
-  --group "External Testers"
+slowlane asc testflight testers
+slowlane asc testflight testers --app APP_RESOURCE_ID --limit 50
 ```
 
-### Groups
-List TestFlight groups:
+Invite a tester to a beta group. The email address is positional, and `--group` expects the group's App Store Connect resource ID:
 
 ```bash
-slowlane asc testflight groups list
+slowlane asc testflight invite new.tester@example.com \
+  --group GROUP_RESOURCE_ID \
+  --first-name Taylor \
+  --last-name Example
 ```
+
+## TestFlight groups
+
+```bash
+slowlane asc testflight groups
+slowlane asc testflight groups --app APP_RESOURCE_ID
+```
+
+Use the ID shown by this command when inviting a tester.

@@ -12,7 +12,6 @@ from rich.table import Table
 
 from slowlane.asc.client import AppStoreConnectClient
 from slowlane.auth.jwt_auth import get_jwt_auth
-from slowlane.auth.session_auth import get_session_auth
 from slowlane.core.config import SlowlaneConfig
 from slowlane.core.errors import AuthExpiredError
 from slowlane.core.secrets import SecretStore
@@ -35,25 +34,16 @@ app.add_typer(testflight_app, name="testflight")
 
 def get_client(ctx: typer.Context) -> AppStoreConnectClient:
     """Get authenticated ASC client."""
-    if ctx.obj is None:
-        config = SlowlaneConfig.load()
-    else:
-        config = ctx.obj.get("config", SlowlaneConfig.load())
-    secret_store = SecretStore()
-
-    # Try JWT first
-    jwt_auth = get_jwt_auth(config, secret_store)
+    config = get_config(ctx)
+    jwt_auth = get_jwt_auth(config)
+    if jwt_auth is None and config.auth.key_id:
+        jwt_auth = get_jwt_auth(config, SecretStore())
     if jwt_auth:
         return AppStoreConnectClient(jwt_auth=jwt_auth, config=config)
 
-    # Fall back to session
-    session_auth = get_session_auth(secret_store=secret_store)
-    if session_auth:
-        return AppStoreConnectClient(session_auth=session_auth, config=config)
-
     raise AuthExpiredError(
-        "No authentication configured. Either set ASC_KEY_ID/ASC_ISSUER_ID/ASC_PRIVATE_KEY "
-        "or run 'spaceauth login'"
+        "App Store Connect API key authentication is required. Set "
+        "ASC_KEY_ID, ASC_ISSUER_ID, and ASC_PRIVATE_KEY or ASC_PRIVATE_KEY_PATH."
     )
 
 
@@ -81,7 +71,7 @@ def output_result(
 ) -> None:
     """Output result in appropriate format."""
     if format == "json":
-        console.print(json.dumps(data, indent=2, default=str))
+        typer.echo(json.dumps(data, indent=2, default=str))
     elif table_builder:
         table_builder(data)
     else:
@@ -92,14 +82,13 @@ def output_result(
 @apps_app.command("list")
 def apps_list(
     ctx: typer.Context,
-    limit: int = typer.Option(50, "--limit", "-l", help="Max results"),
+    limit: int = typer.Option(50, "--limit", "-l", min=1, help="Max results"),
 ) -> None:
     """List all apps in App Store Connect."""
     console = get_console(ctx)
     config = get_config(ctx)
 
-    with console.status("[bold blue]Fetching apps...[/bold blue]"):
-        client = get_client(ctx)
+    with console.status("[bold blue]Fetching apps...[/bold blue]"), get_client(ctx) as client:
         apps = client.list_apps(limit=limit)
 
     def build_table(data: list[dict[str, Any]]) -> None:
@@ -132,12 +121,31 @@ def apps_get(
     console = get_console(ctx)
     config = get_config(ctx)
 
-    with console.status("[bold blue]Fetching app...[/bold blue]"):
-        client = get_client(ctx)
-        app_data = client.get_app(app_id)
+    with console.status("[bold blue]Fetching app...[/bold blue]"), get_client(ctx) as client:
+        app_data = client.get_app_by_bundle_id(app_id) if "." in app_id else client.get_app(app_id)
+
+    if app_data is None:
+        message = f"App not found: {app_id}"
+        if config.output.format == "json":
+            typer.echo(
+                json.dumps(
+                    {
+                        "error": {
+                            "type": "AppStoreConnectError",
+                            "message": message,
+                            "exit_code": 1,
+                        }
+                    },
+                    separators=(",", ":"),
+                ),
+                err=True,
+            )
+        else:
+            console.print(f"[red]{message}[/red]")
+        raise typer.Exit(code=1)
 
     if config.output.format == "json":
-        console.print(json.dumps(app_data, indent=2, default=str))
+        typer.echo(json.dumps(app_data, indent=2, default=str))
     else:
         attrs = app_data.get("attributes", {})
         console.print(f"[bold]App: {attrs.get('name', 'Unknown')}[/bold]")
@@ -152,14 +160,13 @@ def apps_get(
 def builds_list(
     ctx: typer.Context,
     app_id: str | None = typer.Option(None, "--app", "-a", help="Filter by app ID"),
-    limit: int = typer.Option(25, "--limit", "-l", help="Max results"),
+    limit: int = typer.Option(25, "--limit", "-l", min=1, help="Max results"),
 ) -> None:
     """List builds in App Store Connect."""
     console = get_console(ctx)
     config = get_config(ctx)
 
-    with console.status("[bold blue]Fetching builds...[/bold blue]"):
-        client = get_client(ctx)
+    with console.status("[bold blue]Fetching builds...[/bold blue]"), get_client(ctx) as client:
         builds = client.list_builds(app_id=app_id, limit=limit)
 
     def build_table(data: list[dict[str, Any]]) -> None:
@@ -194,16 +201,21 @@ def builds_latest(
     console = get_console(ctx)
     config = get_config(ctx)
 
-    with console.status("[bold blue]Fetching latest build...[/bold blue]"):
-        client = get_client(ctx)
+    with (
+        console.status("[bold blue]Fetching latest build...[/bold blue]"),
+        get_client(ctx) as client,
+    ):
         build = client.get_latest_build(app_id)
 
     if not build:
-        console.print("[yellow]No builds found for this app[/yellow]")
+        if config.output.format == "json":
+            typer.echo("null")
+        else:
+            console.print("[yellow]No builds found for this app[/yellow]")
         return
 
     if config.output.format == "json":
-        console.print(json.dumps(build, indent=2, default=str))
+        typer.echo(json.dumps(build, indent=2, default=str))
     else:
         attrs = build.get("attributes", {})
         console.print("[bold]Latest Build[/bold]")
@@ -219,14 +231,13 @@ def builds_latest(
 def testflight_testers(
     ctx: typer.Context,
     app_id: str | None = typer.Option(None, "--app", "-a", help="Filter by app ID"),
-    limit: int = typer.Option(50, "--limit", "-l", help="Max results"),
+    limit: int = typer.Option(50, "--limit", "-l", min=1, help="Max results"),
 ) -> None:
     """List TestFlight testers."""
     console = get_console(ctx)
     config = get_config(ctx)
 
-    with console.status("[bold blue]Fetching testers...[/bold blue]"):
-        client = get_client(ctx)
+    with console.status("[bold blue]Fetching testers...[/bold blue]"), get_client(ctx) as client:
         testers = client.list_beta_testers(app_id=app_id, limit=limit)
 
     def build_table(data: list[dict[str, Any]]) -> None:
@@ -261,8 +272,7 @@ def testflight_groups(
     console = get_console(ctx)
     config = get_config(ctx)
 
-    with console.status("[bold blue]Fetching groups...[/bold blue]"):
-        client = get_client(ctx)
+    with console.status("[bold blue]Fetching groups...[/bold blue]"), get_client(ctx) as client:
         groups = client.list_beta_groups(app_id=app_id)
 
     def build_table(data: list[dict[str, Any]]) -> None:
@@ -296,9 +306,9 @@ def testflight_invite(
 ) -> None:
     """Invite a tester to a TestFlight beta group."""
     console = get_console(ctx)
+    config = get_config(ctx)
 
-    with console.status("[bold blue]Inviting tester...[/bold blue]"):
-        client = get_client(ctx)
+    with console.status("[bold blue]Inviting tester...[/bold blue]"), get_client(ctx) as client:
         tester = client.invite_beta_tester(
             email=email,
             group_id=group_id,
@@ -306,5 +316,8 @@ def testflight_invite(
             last_name=last_name,
         )
 
-    console.print(f"[green]✓[/green] Invited {email} to group {group_id}")
-    console.print(f"  Tester ID: {tester.get('id', '')}")
+    if config.output.format == "json":
+        typer.echo(json.dumps(tester, indent=2, default=str))
+    else:
+        console.print(f"[green]Invited {email} to group {group_id}.[/green]")
+        console.print(f"  Tester ID: {tester.get('id', '')}")

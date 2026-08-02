@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import math
 import os
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import tomli
 import tomli_w
 
 from .errors import ConfigError
@@ -51,6 +52,22 @@ class HttpConfig:
     max_retries: int = 3
     backoff_factor: float = 0.5
 
+    def __post_init__(self) -> None:
+        self.validate()
+
+    def validate(self) -> None:
+        if type(self.timeout) is not int or self.timeout <= 0:
+            raise ConfigError("http.timeout must be a positive integer")
+        if type(self.max_retries) is not int or self.max_retries < 0:
+            raise ConfigError("http.max_retries must be a non-negative integer")
+        if (
+            isinstance(self.backoff_factor, bool)
+            or not isinstance(self.backoff_factor, int | float)
+            or not math.isfinite(self.backoff_factor)
+            or self.backoff_factor < 0
+        ):
+            raise ConfigError("http.backoff_factor must be a finite non-negative number")
+
 
 @dataclass
 class OutputConfig:
@@ -89,8 +106,9 @@ class SlowlaneConfig:
         if path.exists():
             try:
                 with open(path, "rb") as f:
-                    data = tomli.load(f)
+                    data = tomllib.load(f)
                 config._apply_dict(data)
+                config.validate()
             except Exception as e:
                 raise ConfigError(f"Failed to load config: {e}", path=str(path)) from e
 
@@ -151,6 +169,23 @@ class SlowlaneConfig:
             ),
         }
 
+    def validate(self) -> None:
+        if self.auth.default_mode not in {"jwt", "session"}:
+            raise ConfigError("auth.default_mode must be 'jwt' or 'session'")
+        for name, value in (
+            ("auth.key_id", self.auth.key_id),
+            ("auth.issuer_id", self.auth.issuer_id),
+            ("auth.private_key_path", self.auth.private_key_path),
+            ("devportal.team_id", self.devportal.team_id),
+        ):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ConfigError(f"{name} must be a non-empty string")
+        self.http.validate()
+        if self.output.format not in {"text", "json"}:
+            raise ConfigError("output.format must be 'text' or 'json'")
+        if type(self.output.verbose) is not bool:
+            raise ConfigError("output.verbose must be a boolean")
+
     def save(self, path: Path | None = None) -> None:
         """Save configuration to TOML file."""
         path = path or self._path
@@ -158,6 +193,7 @@ class SlowlaneConfig:
             path = get_config_dir() / "config.toml"
 
         try:
+            self.validate()
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(path, "wb") as f:
                 tomli_w.dump(self.to_dict(), f)
@@ -179,3 +215,5 @@ class SlowlaneConfig:
             self.output.format = "json"
         if os.environ.get("SLOWLANE_VERBOSE", "").lower() in ("1", "true"):
             self.output.verbose = True
+
+        self.validate()

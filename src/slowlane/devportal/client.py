@@ -20,6 +20,26 @@ class DeveloperPortalClient(BaseAppleClient):
     BASE_URL = "https://developer.apple.com/services-account/v1"
     PORTAL_URL = "https://developer.apple.com"
 
+    @staticmethod
+    def _validate_response(response: dict[str, Any]) -> dict[str, Any]:
+        result_code = response.get("resultCode")
+        failed = result_code is not None and str(result_code) != "0"
+        if response.get("success") is False:
+            failed = True
+
+        if failed:
+            message = next(
+                (
+                    str(response[key])
+                    for key in ("userString", "resultString", "errorMessage", "messages")
+                    if response.get(key)
+                ),
+                "Developer Portal request failed",
+            )
+            raise DeveloperPortalError(message, result_code=result_code)
+
+        return response
+
     def __init__(
         self,
         session_auth: SessionAuth,
@@ -53,18 +73,21 @@ class DeveloperPortalClient(BaseAppleClient):
 
     def _get(self, endpoint: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         url = f"{self.BASE_URL}/{endpoint}"
-        params = params or {}
-        params["teamId"] = self._get_team_id()
-        return self._http.get_json(url, params=params)
+        request_params = dict(params or {})
+        request_params["teamId"] = self._get_team_id()
+        response = self._http.get_json(url, params=request_params)
+        return self._validate_response(response)
 
     def _post(self, endpoint: str, data: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.BASE_URL}/{endpoint}"
-        data["teamId"] = self._get_team_id()
-        return self._http.post_json(url, data)
+        request_data = {**data, "teamId": self._get_team_id()}
+        response = self._http.post_json(url, request_data)
+        return self._validate_response(response)
 
     # Teams
     def list_teams(self) -> list[dict[str, Any]]:
         response = self._http.get_json(f"{self.BASE_URL}/account/listTeams")
+        self._validate_response(response)
         return cast(list[dict[str, Any]], response.get("teams", []))
 
     # Certificates
