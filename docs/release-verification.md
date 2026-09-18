@@ -6,7 +6,7 @@ Record the candidate commit, Python/macOS/Xcode versions, verification date, and
 
 ## 0.4.0 preparation record
 
-Prepared on **2026-09-18** from the working tree based on `6aa464d` (`v0.3.0`). The release commit and tag have not been created. Package metadata and the CLI both report `0.4.0`; the development-status classifier remains **Beta**. Update the changelog date if publication happens on a later day.
+Prepared on **2026-09-18** in [PR #44](https://github.com/Demoen/slowlane/pull/44), based on `6aa464d` (`v0.3.0`). Package metadata and the CLI both report `0.4.0`; the development-status classifier remains **Beta**. Publication was authorized with the live Apple checks below explicitly unverified. Update the changelog date if publication happens on a later day.
 
 | Check | Result |
 | --- | --- |
@@ -18,7 +18,7 @@ Prepared on **2026-09-18** from the working tree based on `6aa464d` (`v0.3.0`). 
 | Desktop/mobile documentation | Search, navigation, copying, themes, reduced motion, and overflow checks passed |
 | Distribution metadata and installed-wheel CLI | Passed, including version and JSON error output |
 | Release version gate | Accepts `v0.4.0`; rejects mismatched and unprefixed tags |
-| GitHub Actions on the release commit, including macOS | Pending: commit has not been pushed |
+| GitHub Actions, including macOS | [PR checks passed on `7300393`](https://github.com/Demoen/slowlane/actions/runs/35363483191); verify the final main and tag workflows before claiming release completion |
 | Live Apple reads, disposable signing resources, TestFlight membership | Not run |
 | Signed IPA/PKG validation, upload, and processing confirmation on macOS | Not run |
 
@@ -26,8 +26,8 @@ Local preparation artifacts are built into `dist/0.4.0/` so they cannot be confu
 
 Before tagging:
 
-1. Complete the live checks below and record their results against the final candidate commit. Do not claim live validation for an untested workflow.
-2. Set Pages to **GitHub Actions** and allow branch `main` in the `github-pages` environment. At preparation time, Pages still uses branch publishing and the environment permits only `gh-pages`.
+1. Keep the unverified live checks explicit in the beta release notes. Complete and record the checks below before claiming live Apple compatibility.
+2. Pages is configured to use **GitHub Actions**, and the `github-pages` environment permits branch `main`. Verify deployment from the merged commit.
 3. After merging the Dependabot configuration, enable repository dependency alerts and automated security fixes; both are disabled at preparation time. Enable private vulnerability reporting so the reporting route in `SECURITY.md` is available; that setting is also currently disabled.
 4. Verify the PyPI trusted publisher for `Demoen/slowlane`, workflow `release.yml`, and environment `pypi`. The previous release used it successfully, but current PyPI-side configuration has not been inspected. The GitHub `pypi` environment currently has no reviewer or branch/tag restrictions; the environment name alone does not enforce approval.
 5. Commit and push the prepared change, record its SHA, and wait for the complete CI/CD workflow to pass. Refresh this record if code or dependencies change.

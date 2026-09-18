@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0] - 2026-09-18
 
-This is a breaking upgrade from 0.3.x. Read the [migration guide](https://demoen.github.io/slowlane/migration/) before updating automation. Slowlane remains beta; live Apple-account and upload verification are separate from the automated test suite.
+This is a breaking upgrade from 0.3.x. Read the [migration guide](https://demoen.github.io/slowlane/migration/) before updating automation. Slowlane remains beta. Automated tests pass on Windows, Linux, and macOS; live Apple-account operations and signed macOS uploads have not been verified for this release.
 
 ### Added
 - Public App Store Connect API certificate and provisioning-profile operations, including downloads and `signing devices list`.
