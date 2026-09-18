@@ -8,10 +8,10 @@ slowlane [GLOBAL OPTIONS] COMMAND [ARGS]
 
 | Option | Purpose |
 | --- | --- |
-| `--verbose`, `-v` | Enable verbose output |
-| `--json` | Request JSON output from commands that support structured results |
+| `--verbose`, `-v` | Enable diagnostics on stderr |
+| `--json` | Emit structured results on stdout and structured errors on stderr |
 | `--config PATH`, `-c PATH` | Load a specific TOML configuration file |
-| `--version`, `-V` | Show the installed version and exit |
+| `--version`, `-V` | Show the installed version |
 | `--help` | Show contextual help |
 
 Global options must precede the command:
@@ -20,60 +20,78 @@ Global options must precede the command:
 slowlane --json asc apps list
 ```
 
-The `slowlane version` command provides the same version information.
+## Diagnostics
 
-## Session authentication
-
-| Command | Key arguments and options |
+| Command | Behavior |
 | --- | --- |
-| `spaceauth login` | `--email EMAIL`, `--service SERVICE`, `--headless` |
-| `spaceauth export` | `--email EMAIL` |
-| `spaceauth verify` | `--email EMAIL` |
-| `spaceauth revoke` | Delete the local stored copy; required `--email EMAIL`, optional `--force` |
-| `spaceauth doctor` | No command-specific options |
+| `version` | Show the installed version |
+| `doctor` | Inspect local API-key configuration and upload tooling without contacting Apple |
+| `doctor --online` | Also make a read-only App Store Connect API request |
 
-Interactive login requires the `interactive` package extra and an installed Chromium browser.
-Deleting a local session does not invalidate exported copies or the session at Apple.
+An online apps check does not prove permission for every endpoint. Incomplete or invalid credentials must be corrected before network workflows can run.
 
 ## App Store Connect
 
-| Command | Key arguments and options |
+| Command | Arguments and options |
 | --- | --- |
 | `asc apps list` | `--limit NUMBER` |
-| `asc apps get APP_ID_OR_BUNDLE_ID` | App Store Connect app resource ID or bundle ID |
+| `asc apps get APP_ID_OR_BUNDLE_ID` | App resource ID or reverse-DNS bundle identifier |
 | `asc builds list` | `--app APP_ID`, `--limit NUMBER` |
-| `asc builds latest APP_ID` | App Store Connect app resource ID |
+| `asc builds latest APP_ID` | App resource ID |
 | `asc testflight testers` | `--app APP_ID`, `--limit NUMBER` |
 | `asc testflight groups` | `--app APP_ID` |
 | `asc testflight invite EMAIL` | Required `--group GROUP_ID`; optional `--first-name`, `--last-name` |
 
-## Certificates and provisioning profiles
+Team and individual keys can use eligible endpoints, subject to the role and account permissions.
 
-Developer Portal commands require session authentication. Use `--team-id TEAM_ID` when the Apple ID belongs to more than one team.
+TestFlight invitations support external groups only. Existing testers are reused, and email delivery depends on Apple's build readiness and notification settings.
 
-| Command | Key arguments and options |
+## Signing
+
+All signing commands require a **team key**. The key's issuer selects the account.
+
+| Command | Arguments and options |
 | --- | --- |
-| `signing certs list` | `--type TYPE`, `--team-id TEAM_ID` |
-| `signing certs create` | Required `--type TYPE` and `--csr PATH`; optional `--team-id TEAM_ID` |
-| `signing certs revoke CERT_ID` | `--force`, `--team-id TEAM_ID` |
-| `signing profiles list` | `--type TYPE`, `--app BUNDLE_ID`, `--team-id TEAM_ID` |
-| `signing profiles create` | Required `--name`, `--type`, `--bundle-id`; repeatable `--device` for development and ad hoc; optional `--cert`, `--team-id` |
-| `signing profiles delete PROFILE_ID` | `--force`, `--team-id TEAM_ID` |
+| `signing certs list` | Optional `--type TYPE` |
+| `signing certs create` | Required `--type TYPE`, `--csr PATH` |
+| `signing certs download CERT_ID` | Required `--output PATH`; refuses existing files |
+| `signing certs revoke CERT_ID` | Optional `--force` |
+| `signing profiles list` | Optional `--type TYPE`, `--app BUNDLE_ID` |
+| `signing profiles create` | Required `--name`, `--type`, `--bundle-id`, `--cert`; repeatable `--device` |
+| `signing profiles download PROFILE_ID` | Required `--output PATH`; refuses existing files |
+| `signing profiles delete PROFILE_ID` | Optional `--force` |
+| `signing devices list` | List registered device resource IDs |
+
+See [certificates](usage/certificates.md) and [profiles](usage/profiles.md) for supported types. There is no automatic certificate selection. Development and ad hoc profiles require devices; App Store profiles reject devices.
+
+JSON signing resources use Apple's public API shape: `id`, `type`, `attributes`, and relationships when returned by Apple.
+
+Certificate revocation and profile deletion require `--force` in JSON mode or a noninteractive process. An interactive text-mode invocation prompts for confirmation. Approve the exact target before using `--force` in automation.
 
 ## Uploads
 
-| Command | Key arguments and options |
+| Command | Arguments and options |
 | --- | --- |
-| `upload ipa PATH` | `--validate-only`, `--skip-validation` |
-| `upload pkg PATH` | Upload a macOS package through the same Transporter flow |
+| `upload ipa PATH` | `--validate-only` or `--skip-validation` |
+| `upload pkg PATH` | `--validate-only` or `--skip-validation`; macOS App Store package |
 
-Uploads require API-key authentication and Apple Transporter or `altool`.
+Uploads require macOS, supported Apple upload tools, and a team key. The two validation flags are mutually exclusive. Non-iOS IPA platforms require Transporter; the `altool` fallback supports iOS device IPAs and macOS PKGs.
 
-## CI environment helpers
+## CI helpers
 
-| Command | Key arguments and options |
+| Command | Arguments and options |
 | --- | --- |
-| `env print` | `--platform github|gitlab|azure|generic`, `--include-session` |
-| `env setup` | `--platform github|gitlab|azure` |
+| `env print` | `--platform github\|gitlab\|azure\|generic` |
+| `env setup` | `--platform github\|gitlab\|azure` |
 
-Use `slowlane COMMAND --help` for the authoritative option list installed with a particular release.
+Templates help wire API credentials into a CI secret store. They do not configure your CI provider or export session cookies.
+
+## Automation
+
+A successful command exits with code `0`. Failures use nonzero codes; inspect the JSON error object on stderr when using `--json`. Do not treat an empty stdout stream as success.
+
+```bash
+slowlane --json signing profiles list > profiles.json
+```
+
+Use `slowlane COMMAND --help` as the authoritative option list for the installed version. The [migration guide](migration.md) covers removed commands and changed signing output.

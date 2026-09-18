@@ -12,6 +12,7 @@ import pytest
 from slowlane.core.errors import (
     AccessDeniedError,
     AppleFlowChangedError,
+    AppStoreConnectError,
     AuthExpiredError,
     NetworkError,
     RateLimitError,
@@ -54,12 +55,6 @@ class TestAppleHTTPClientInit:
         assert client._jwt_token == "my.token.here"
         client.close()
 
-    def test_set_cookies(self) -> None:
-        client = AppleHTTPClient()
-        client.set_cookies({"session": "abc"})
-        assert client._cookies == {"session": "abc"}
-        client.close()
-
     def test_context_manager(self) -> None:
         with AppleHTTPClient() as client:
             assert client is not None
@@ -99,62 +94,14 @@ class TestAppleHTTPClientInit:
 
         client = AppleHTTPClient(
             jwt_token="test.token.value",
-            cookies={"myacinfo": "secret", "DES": "secret"},
         )
         client._client.close()
         client._client = httpx.Client(transport=httpx.MockTransport(handle_request))
-        client._install_session_cookies()
 
         with pytest.raises(AppleFlowChangedError, match="untrusted URL"):
             client.get(url)
 
         assert requests == []
-        client.close()
-
-    def test_session_redirect_is_not_followed_or_leaked(self) -> None:
-        requests: list[httpx.Request] = []
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            requests.append(request)
-            return httpx.Response(302, headers={"Location": "https://example.com/capture"})
-
-        client = AppleHTTPClient(cookies={"myacinfo": "secret", "DES": "secret"})
-        client._client.close()
-        client._client = httpx.Client(
-            transport=httpx.MockTransport(handle_request),
-            follow_redirects=False,
-        )
-        client._install_session_cookies()
-
-        with pytest.raises(AuthExpiredError, match="session may be expired"):
-            client.get("https://developer.apple.com/services-account/v1/account/listTeams")
-
-        assert len(requests) == 1
-        assert requests[0].url.host == "developer.apple.com"
-        assert requests[0].headers["Cookie"] == "myacinfo=secret; DES=secret"
-        client.close()
-
-    def test_response_cookie_replaces_stored_session_cookie(self) -> None:
-        cookies_seen: list[str] = []
-
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            cookies_seen.append(request.headers["Cookie"])
-            headers = {"Set-Cookie": "myacinfo=new; Path=/"} if len(cookies_seen) == 1 else {}
-            return httpx.Response(200, json={}, headers=headers)
-
-        client = AppleHTTPClient(cookies={"myacinfo": "old", "DES": "des"})
-        client._client.close()
-        client._client = httpx.Client(
-            transport=httpx.MockTransport(handle_request),
-            follow_redirects=False,
-        )
-        client._install_session_cookies()
-        url = "https://developer.apple.com/services-account/v1/account/listTeams"
-
-        client.get(url)
-        client.get(url)
-
-        assert cookies_seen == ["myacinfo=old; DES=des", "myacinfo=new; DES=des"]
         client.close()
 
 
@@ -185,7 +132,7 @@ class TestAppleHTTPClientErrorClassification:
         response.status_code = 403
         response.json.return_value = {"errors": [{"detail": "Authentication required"}]}
 
-        with pytest.raises(AuthExpiredError, match="Authentication required"):
+        with pytest.raises(AccessDeniedError, match="Authentication required"):
             client._classify_error(response)
         client.close()
 
@@ -234,7 +181,7 @@ class TestAppleHTTPClientErrorClassification:
         response.status_code = 400
         response.json.return_value = {}
 
-        with pytest.raises(AppleFlowChangedError, match="HTTP 400"):
+        with pytest.raises(AppStoreConnectError, match="HTTP 400"):
             client._classify_error(response)
         client.close()
 
@@ -412,3 +359,49 @@ class TestAppleHTTPClientRetry:
             client.post_json("https://example.com/test", {"name": "value"})
 
         client.close()
+
+
+def test_verbose_http_logs_exclude_response_body_and_query(caplog):
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(
+            200, json={"token": "body-secret-marker", "private_key": "private-key-marker"}
+        )
+
+    with AppleHTTPClient(jwt_token="header-secret-marker") as client:
+        client._client.close()
+        client._client = httpx.Client(transport=httpx.MockTransport(respond))
+        with caplog.at_level("DEBUG", logger="slowlane.core.http"):
+            client.get(
+                "https://api.appstoreconnect.apple.com/v1/betaTesters?filter[email]=query-secret-marker"
+            )
+    assert len(requests) == 1
+    messages = "\n".join(
+        record.getMessage() for record in caplog.records if record.name == "slowlane.core.http"
+    )
+    for marker in (
+        "body-secret-marker",
+        "private-key-marker",
+        "header-secret-marker",
+        "query-secret-marker",
+    ):
+        assert marker not in messages
+    assert "Response: 200" in messages
+
+
+@pytest.mark.parametrize("errors", [None, 42, "invalid", [None, 1, {"detail": {"invalid": True}}]])
+def test_malformed_forbidden_error_remains_access_denied(errors):
+    with AppleHTTPClient() as client, pytest.raises(AccessDeniedError, match="HTTP 403"):
+        client._classify_error(httpx.Response(403, json={"errors": errors}))
+
+
+def test_apple_error_redacts_echoed_token():
+    with AppleHTTPClient(jwt_token="sensitive-token-marker") as client:
+        with pytest.raises(AppStoreConnectError) as error:
+            client._classify_error(
+                httpx.Response(409, json={"errors": [{"detail": "Invalid sensitive-token-marker"}]})
+            )
+        assert "sensitive-token-marker" not in str(error.value)
+        assert "[REDACTED]" in str(error.value)

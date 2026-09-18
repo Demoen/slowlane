@@ -90,10 +90,5 @@ config.local.toml
 .DS_Store
 Thumbs.db
 
-# Playwright
-playwright-report/
-playwright/.cache/
-
-
-# MkDocs
+# Documentation
 site/

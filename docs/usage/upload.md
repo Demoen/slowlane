@@ -1,43 +1,54 @@
 # Uploads
 
-Slowlane validates and uploads IPA and PKG files through Apple Transporter or `altool`. Uploads require App Store Connect API-key authentication and Apple tooling that is normally available only on macOS.
+Upload signed IPA and PKG artifacts using Apple's tools on **macOS**. This release requires a **team API key** for uploads.
 
-## Prerequisites
+## Before uploading
 
-1. Install Xcode or the Transporter app.
-2. Configure `ASC_KEY_ID`, `ASC_ISSUER_ID`, and either `ASC_PRIVATE_KEY_PATH` or `ASC_PRIVATE_KEY`.
-3. Accept current agreements in App Store Connect.
-4. Confirm that the binary is signed for its intended distribution channel.
+1. Install a current Xcode or Apple Transporter version.
+2. Configure a team key with `ASC_KEY_ID`, `ASC_ISSUER_ID`, and either `ASC_PRIVATE_KEY_PATH` or `ASC_PRIVATE_KEY`.
+3. Confirm your API key has upload permissions and the app record exists in App Store Connect.
+4. Check your signed artifact and the current [Apple submission requirements](https://developer.apple.com/news/upcoming-requirements/).
 
-Use `TRANSPORTER_PATH` if automatic tool discovery does not find the correct executable.
+Slowlane discovers supported Apple upload tools locally. Set `TRANSPORTER_PATH` to the executable when automatic discovery cannot find it. Paths must point to the Apple binary, not the enclosing application bundle.
 
-## Upload an IPA
+Transporter is required for IPA platforms other than iOS. The `altool` fallback supports iOS device IPAs and macOS PKGs only; simulator artifacts are not uploadable.
 
-```bash
-slowlane upload ipa ./path/to/MyApp.ipa
-```
-
-Validate without uploading:
+## IPA
 
 ```bash
-slowlane upload ipa ./path/to/MyApp.ipa --validate-only
+slowlane upload ipa ./App.ipa
 ```
 
-By default, Slowlane validates before upload. Skip that separate validation pass only when another trusted step has already validated the artifact:
+The default flow validates before uploading:
 
 ```bash
-slowlane upload ipa ./path/to/MyApp.ipa --skip-validation
+slowlane upload ipa ./App.ipa --validate-only
 ```
 
-## Upload a PKG
+When your pipeline has already validated this exact artifact, skip the separate validation pass:
 
 ```bash
-slowlane upload pkg ./path/to/MyApp.pkg
+slowlane upload ipa ./App.ipa --skip-validation
 ```
+
+`--validate-only` and `--skip-validation` are mutually exclusive.
+
+## PKG
+
+```bash
+slowlane upload pkg ./App.pkg
+```
+
+PKG uploads also accept `--validate-only` and `--skip-validation`, with the same mutually exclusive behavior as IPA uploads.
+
+This command uploads an App Store package for macOS. It does not perform Developer ID notarization. Use Apple's notarization tooling for that separate workflow.
+
+## Know when it is done
+
+An upload command reports the result of the upload tool. A successful transfer does **not** mean Apple has finished processing the build or approved it for distribution. Inspect [build processing state](builds.md) in a later step and check App Store Connect for any processing errors.
+
+Do not blindly repeat an upload after a timeout: the artifact may already have reached Apple. Check App Store Connect first.
 
 ## Troubleshooting
 
-- Run `slowlane spaceauth doctor` to inspect local authentication and dependency configuration.
-- Confirm that the API key role permits the requested operation.
-- Check that Xcode or Transporter is current and accessible to the CI runner.
-- Re-run with the global `--verbose` option before the upload command to collect diagnostic output without exposing credentials.
+Run `slowlane doctor` for local checks and `slowlane doctor --online` for read-only API connectivity. The online check does not prove upload permission or validate an artifact. Review [troubleshooting](../troubleshooting.md) for authentication, tool discovery, and network failures.

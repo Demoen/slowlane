@@ -4,7 +4,6 @@ import hashlib
 import os
 import stat
 import tempfile
-from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -16,8 +15,6 @@ from slowlane.core.secrets import (
     EncryptedFileBackend,
     KeyringBackend,
     SecretStore,
-    SessionData,
-    hash_email,
 )
 
 
@@ -65,55 +62,6 @@ class TestKeyringBackend:
             pytest.raises(SecretStorageError, match="Failed to delete secret"),
         ):
             KeyringBackend().delete("session")
-
-
-class TestHashEmail:
-    """Tests for email hashing."""
-
-    def test_hash_email(self) -> None:
-        """Test email hashing produces consistent output."""
-        email = "test@example.com"
-        hash1 = hash_email(email)
-        hash2 = hash_email(email)
-        assert hash1 == hash2
-        assert len(hash1) == 16  # Truncated to 16 chars
-
-    def test_hash_email_case_insensitive(self) -> None:
-        """Test email hashing is case insensitive."""
-        assert hash_email("Test@Example.COM") == hash_email("test@example.com")
-
-
-class TestSessionData:
-    """Tests for SessionData."""
-
-    def test_to_dict(self) -> None:
-        """Test serializing to dictionary."""
-        now = datetime.now(UTC)
-        session = SessionData(
-            cookies={"myacinfo": "abc123"},
-            email_hash="hash123",
-            created_at=now,
-            target_service="appstoreconnect",
-        )
-
-        d = session.to_dict()
-        assert d["cookies"] == {"myacinfo": "abc123"}
-        assert d["email_hash"] == "hash123"
-        assert d["target_service"] == "appstoreconnect"
-
-    def test_from_dict(self) -> None:
-        """Test deserializing from dictionary."""
-        data = {
-            "cookies": {"myacinfo": "abc123"},
-            "email_hash": "hash123",
-            "created_at": "2024-01-01T00:00:00+00:00",
-            "verified_at": None,
-            "target_service": "appstoreconnect",
-        }
-
-        session = SessionData.from_dict(data)
-        assert session.cookies == {"myacinfo": "abc123"}
-        assert session.email_hash == "hash123"
 
 
 class TestEncryptedFileBackend:
@@ -236,38 +184,3 @@ class TestSecretStore:
             value = store.retrieve_api_key("KEY123")
 
             assert value == "private_key_content"
-
-    def test_store_and_retrieve_session(self) -> None:
-        """Test storing and retrieving sessions."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            backend = EncryptedFileBackend(Path(tmpdir))
-            store = SecretStore(backend)
-
-            session = SessionData(
-                cookies={"myacinfo": "abc"},
-                email_hash="",
-                created_at=datetime.now(UTC),
-            )
-
-            store.store_session("test@example.com", session)
-            retrieved = store.retrieve_session("test@example.com")
-
-            assert retrieved is not None
-            assert retrieved.cookies == {"myacinfo": "abc"}
-
-    def test_delete_session(self) -> None:
-        """Test deleting sessions."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            backend = EncryptedFileBackend(Path(tmpdir))
-            store = SecretStore(backend)
-
-            session = SessionData(
-                cookies={"myacinfo": "abc"},
-                email_hash="",
-                created_at=datetime.now(UTC),
-            )
-
-            store.store_session("test@example.com", session)
-            store.delete_session("test@example.com")
-
-            assert store.retrieve_session("test@example.com") is None

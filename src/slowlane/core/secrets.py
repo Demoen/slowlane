@@ -5,14 +5,10 @@ from __future__ import annotations
 import base64
 import contextlib
 import hashlib
-import json
 import os
 import tempfile
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
@@ -20,45 +16,6 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from .config import get_data_dir
 from .errors import SecretStorageError
-
-
-def hash_email(email: str) -> str:
-    """Hash an email address for storage (never store plaintext)."""
-    return hashlib.sha256(email.lower().encode()).hexdigest()[:16]
-
-
-@dataclass
-class SessionData:
-    """Session data with metadata."""
-
-    cookies: dict[str, str]
-    email_hash: str
-    created_at: datetime
-    verified_at: datetime | None = None
-    target_service: str = "appstoreconnect"
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to serializable dictionary."""
-        return {
-            "cookies": self.cookies,
-            "email_hash": self.email_hash,
-            "created_at": self.created_at.isoformat(),
-            "verified_at": self.verified_at.isoformat() if self.verified_at else None,
-            "target_service": self.target_service,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> SessionData:
-        """Create from dictionary."""
-        return cls(
-            cookies=data["cookies"],
-            email_hash=data["email_hash"],
-            created_at=datetime.fromisoformat(data["created_at"]),
-            verified_at=(
-                datetime.fromisoformat(data["verified_at"]) if data.get("verified_at") else None
-            ),
-            target_service=data.get("target_service", "appstoreconnect"),
-        )
 
 
 class SecretBackend(ABC):
@@ -281,8 +238,6 @@ class EncryptedFileBackend(SecretBackend):
 class SecretStore:
     """High-level secret storage with automatic backend selection."""
 
-    DEFAULT_SESSION_KEY = "session:default"
-
     def __init__(self, backend: SecretBackend | None = None) -> None:
         if backend is not None:
             self._backend = backend
@@ -304,47 +259,3 @@ class SecretStore:
     def delete_api_key(self, key_id: str) -> None:
         """Delete an API private key."""
         self._backend.delete(f"api_key:{key_id}")
-
-    def store_session(self, email: str, session: SessionData) -> None:
-        """Store session data for an account."""
-        email_hash = hash_email(email)
-        session.email_hash = email_hash
-        data = json.dumps(session.to_dict())
-        self._backend.store(f"session:{email_hash}", data)
-        self._backend.store(self.DEFAULT_SESSION_KEY, email_hash)
-
-    def retrieve_session(self, email: str) -> SessionData | None:
-        """Retrieve session data for an account."""
-        email_hash = hash_email(email)
-        data = self._backend.retrieve(f"session:{email_hash}")
-        if data is None:
-            return None
-        return SessionData.from_dict(json.loads(data))
-
-    def retrieve_session_by_hash(self, email_hash: str) -> SessionData | None:
-        """Retrieve session data by email hash."""
-        data = self._backend.retrieve(f"session:{email_hash}")
-        if data is None:
-            return None
-        return SessionData.from_dict(json.loads(data))
-
-    def retrieve_default_session(self) -> SessionData | None:
-        """Retrieve the most recently stored session."""
-        email_hash = self._backend.retrieve(self.DEFAULT_SESSION_KEY)
-        if not email_hash:
-            return None
-        return self.retrieve_session_by_hash(email_hash)
-
-    def delete_session(self, email: str) -> None:
-        """Delete session data for an account."""
-        email_hash = hash_email(email)
-        self._backend.delete(f"session:{email_hash}")
-        if self._backend.retrieve(self.DEFAULT_SESSION_KEY) == email_hash:
-            self._backend.delete(self.DEFAULT_SESSION_KEY)
-
-    def update_session_verified(self, email: str) -> None:
-        """Update session's last verified timestamp."""
-        session = self.retrieve_session(email)
-        if session:
-            session.verified_at = datetime.now(UTC)
-            self.store_session(email, session)

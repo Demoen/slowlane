@@ -1,77 +1,66 @@
 # Authentication
 
-Slowlane supports App Store Connect API keys and Apple ID sessions. Use API keys for App Store Connect REST API and upload workflows. Developer Portal signing commands require an Apple ID session.
+Every network workflow uses an App Store Connect API key. Choose a **team key** for signing and uploads; an **individual key** can access eligible App Store Connect endpoints with the permissions of its user.
 
-## App Store Connect API key
+| Workflow | Team key | Individual key |
+| --- | --- | --- |
+| Apps, builds, and TestFlight | Subject to key role | Subject to user role and app access |
+| Certificates, profiles, and devices | Required | Unsupported |
+| IPA and PKG uploads | Required by Slowlane | Unsupported by Slowlane |
 
-Create a key in App Store Connect under **Users and Access > Integrations**, then record the issuer ID and key ID. The `.p8` private key can be downloaded only once.
+Apple documents [API key management](https://developer.apple.com/help/app-store-connect/get-started/app-store-connect-api/) and [JWT authentication](https://developer.apple.com/documentation/appstoreconnectapi/generating-tokens-for-api-requests). Slowlane generates short-lived tokens locally from your private key.
 
-Provide the credentials through environment variables:
+## Team key
+
+Create a team key in App Store Connect under **Users and Access → Integrations → App Store Connect API**. Choose the role required by your workflow. Save the key ID, issuer ID, and downloaded `.p8` file; Apple offers the private-key download only once.
 
 ```bash
+export ASC_KEY_TYPE="team"
 export ASC_KEY_ID="XXXXXXXXXX"
 export ASC_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 export ASC_PRIVATE_KEY_PATH="/absolute/path/to/AuthKey_XXXXXXXXXX.p8"
-```
 
-Secret managers can supply the key contents directly instead:
-
-```bash
-export ASC_PRIVATE_KEY="$(cat AuthKey_XXXXXXXXXX.p8)"
-```
-
-Confirm access by listing apps:
-
-```bash
+slowlane doctor
+slowlane doctor --online
 slowlane asc apps list
 ```
 
-## Apple ID session
+`team` is the default key type. A team's issuer identifies the account for signing operations; there is no separate `--team-id`.
 
-Install the interactive-login extra and Chromium before starting a browser login:
+## Individual key
 
-```bash
-python -m pip install "slowlane[interactive]"
-python -m playwright install chromium
-```
-
-Include an email address so Slowlane can store and retrieve the session:
+Generate an individual API key from your App Store Connect user profile if your account permits it. Set the key type explicitly and remove any team issuer from the environment **and** configuration file:
 
 ```bash
-slowlane spaceauth login --service developer --email developer@example.com
+export ASC_KEY_TYPE="individual"
+export ASC_KEY_ID="XXXXXXXXXX"
+unset ASC_ISSUER_ID
+export ASC_PRIVATE_KEY_PATH="/absolute/path/to/AuthKey_XXXXXXXXXX.p8"
+
+slowlane doctor --online
+slowlane asc apps list
 ```
 
-The browser handles Apple ID credentials and two-factor authentication. Slowlane extracts the resulting session cookies after login; it does not store the Apple ID password.
+An individual key must not have an `issuer_id` in `config.toml`. Slowlane rejects conflicting configuration instead of guessing which identity to use. Individual keys cannot manage signing resources; Slowlane also restricts uploads to team keys.
 
-### Verify a stored session
+## CI and secret managers
 
-```bash
-slowlane spaceauth verify --email developer@example.com
+Supply the private-key contents through `ASC_PRIVATE_KEY`, or use `ASC_PRIVATE_KEY_PATH` for a protected file. Keep one key source configured so the selected credential is clear.
+
+```yaml
+env:
+  ASC_KEY_TYPE: team
+  ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+  ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+  ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
 ```
 
-`spaceauth doctor` inspects local dependencies and authentication configuration. It does not replace remote session verification.
+Use `slowlane env print --platform github` for a configuration template. Templates reference the secret store; they do not replace creating its secrets. Use a macOS runner for uploads.
 
-### Export a session for CI
+For GitLab, use a protected **File** CI variable named `ASC_PRIVATE_KEY_PATH` containing the PEM key. GitLab exposes its temporary file path to the job; do not try to mask a raw multiline PEM value. In Azure, put secret references such as `ASC_PRIVATE_KEY: $(ASC_PRIVATE_KEY)` in the task's `env:` mapping.
 
-```bash
-slowlane spaceauth export --email developer@example.com
-```
+## Credential handling
 
-Store the emitted `FASTLANE_SESSION` value in the CI provider's secret store. The value contains authentication cookies and must be protected like a password.
+Keep private keys out of source control, command arguments, and shared logs. Grant the narrowest role your operations need. Revoke an exposed key in App Store Connect and replace it in each environment.
 
-### Remove a stored session
-
-```bash
-slowlane spaceauth revoke --email developer@example.com
-```
-
-This deletes only the local stored copy. Exported values and the session at Apple remain valid
-until you invalidate them through the Apple account.
-
-## Security guidance
-
-- Never commit `.p8` files or exported sessions.
-- Grant API keys only the roles required by the workflow.
-- Rotate API keys and sessions according to your organization's credential policy.
-- Avoid printing exported sessions in shared or retained CI logs.
-- Revoke credentials immediately if exposure is suspected.
+Apple ID login, browser cookies, and `FASTLANE_SESSION` are no longer authentication methods. Existing users should follow the [migration guide](migration.md).

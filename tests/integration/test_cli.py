@@ -14,7 +14,7 @@ runner = CliRunner()
 @pytest.fixture(autouse=True)
 def isolated_credentials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for name in (
-        "FASTLANE_SESSION",
+        "ASC_KEY_TYPE",
         "ASC_KEY_ID",
         "ASC_ISSUER_ID",
         "ASC_PRIVATE_KEY",
@@ -43,14 +43,6 @@ class TestCLI:
         assert result.exit_code == 0
         assert "slowlane" in result.stdout.lower()
 
-    def test_spaceauth_help(self) -> None:
-        """Test spaceauth --help."""
-        result = runner.invoke(app, ["spaceauth", "--help"])
-        assert result.exit_code == 0
-        assert "login" in result.stdout
-        assert "export" in result.stdout
-        assert "verify" in result.stdout
-
     def test_asc_help(self) -> None:
         """Test asc --help."""
         result = runner.invoke(app, ["asc", "--help"])
@@ -77,12 +69,6 @@ class TestCLI:
         result = runner.invoke(app, ["env", "--help"])
         assert result.exit_code == 0
         assert "print" in result.stdout
-
-    def test_spaceauth_doctor(self) -> None:
-        """Test spaceauth doctor runs without error."""
-        result = runner.invoke(app, ["spaceauth", "doctor"])
-        assert result.exit_code == 0
-        assert "Diagnostics" in result.stdout or "Check" in result.stdout
 
 
 class TestEnvCommands:
@@ -132,26 +118,6 @@ class TestEnvCommands:
         result = runner.invoke(app, ["env", "setup", "--platform", "azure"])
         assert result.exit_code == 0
         assert "Azure DevOps" in result.stdout
-
-
-class TestSpaceauthCommands:
-    """Tests for spaceauth command functionality."""
-
-    def test_spaceauth_verify_no_session(self) -> None:
-        """Test spaceauth verify with no session."""
-        result = runner.invoke(app, ["spaceauth", "verify"])
-        # Should fail gracefully with no session
-        assert (
-            result.exit_code != 0
-            or "No session" in result.stdout
-            or "not found" in result.stdout.lower()
-        )
-
-    def test_spaceauth_export_no_session(self) -> None:
-        """Test spaceauth export with no session."""
-        result = runner.invoke(app, ["spaceauth", "export"])
-        # Should indicate no session available
-        assert "session" in result.stdout.lower() or result.exit_code != 0
 
 
 class TestAscCommands:

@@ -2,13 +2,30 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from slowlane.auth.jwt_auth import JWTAuth
-from slowlane.auth.session_auth import SessionAuth
 from slowlane.core.config import SlowlaneConfig
+
+
+@pytest.fixture(autouse=True)
+def isolated_user_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "ASC_KEY_TYPE",
+        "ASC_KEY_ID",
+        "ASC_ISSUER_ID",
+        "ASC_PRIVATE_KEY",
+        "ASC_PRIVATE_KEY_PATH",
+        "SLOWLANE_JSON",
+        "SLOWLANE_VERBOSE",
+        "TRANSPORTER_PATH",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    for name in ("APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME"):
+        monkeypatch.setenv(name, str(tmp_path / name.lower()))
 
 
 @pytest.fixture
@@ -20,13 +37,7 @@ def mock_config() -> SlowlaneConfig:
 def mock_jwt_auth() -> MagicMock:
     auth = MagicMock(spec=JWTAuth)
     auth.get_token.return_value = "mock.jwt.token"
-    return auth
-
-
-@pytest.fixture
-def mock_session_auth() -> MagicMock:
-    auth = MagicMock(spec=SessionAuth)
-    auth.cookies = {"myacinfo": "abc123", "DSESSIONID": "xyz"}
+    auth.key_type = "team"
     return auth
 
 
