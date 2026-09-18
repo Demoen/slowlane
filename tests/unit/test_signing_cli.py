@@ -13,6 +13,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
+from rich.text import Text
 from typer.testing import CliRunner
 
 from slowlane.cli import main as cli_main
@@ -128,7 +129,7 @@ def test_profile_creation_requires_explicit_certificate(client: MagicMock) -> No
         ],
     )
     assert result.exit_code != 0
-    assert "--cert" in result.output
+    assert "--cert" in Text.from_ansi(result.output).plain
     client.create_profile.assert_not_called()
     client.list_certificates.assert_not_called()
 
@@ -136,7 +137,7 @@ def test_profile_creation_requires_explicit_certificate(client: MagicMock) -> No
 def test_certificate_creation_requires_csr(client: MagicMock) -> None:
     result = runner.invoke(cli_main.app, ["signing", "certs", "create", "--type", "development"])
     assert result.exit_code != 0
-    assert "--csr" in result.output
+    assert "--csr" in Text.from_ansi(result.output).plain
     client.create_certificate.assert_not_called()
 
 
