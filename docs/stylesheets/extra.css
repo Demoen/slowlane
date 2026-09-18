@@ -28,7 +28,7 @@ body:has(.sl-home) .md-tabs { border-bottom: 1px solid #ffffff12; }
 body:has(.sl-home) .md-footer { background: #101414; color: #bcc2bd; }
 body:has(.sl-home) .md-footer-meta { background: transparent; }
 body:has(.sl-home) .md-copyright { color: #9da79f; }
-body:has(.sl-home) .md-footer-meta a { color: #b9c4bc; }
+body:has(.sl-home) .md-footer .md-footer-meta a { color: #b9c4bc; }
 body:has(.sl-home) .md-main__inner { margin-top: 0; max-width: 76rem; }
 .md-content__inner:has(.sl-home) { margin: 0; padding: 0; }
 .md-content__inner:has(.sl-home) > h1,
