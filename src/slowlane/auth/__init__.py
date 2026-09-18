@@ -1,1 +1,1 @@
-"""Auth module - JWT and session authentication."""
+"""App Store Connect API-key authentication."""

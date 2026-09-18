@@ -1,35 +1,25 @@
 from __future__ import annotations
 
-import io
 import json
 import logging
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
-from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import typer
-from click import Abort, unstyle
-from rich.console import Console
 from typer.testing import CliRunner
 
-from slowlane.asc.client import AppStoreConnectClient
-from slowlane.auth.session_auth import SessionAuth
-from slowlane.cli import asc, env, signing, spaceauth, upload
+from slowlane.cli import asc, env, signing, upload
 from slowlane.cli import main as cli_main
 from slowlane.cli.main import app
 from slowlane.core.config import SlowlaneConfig
 from slowlane.core.errors import (
-    AppStoreConnectError,
-    AuthExpiredError,
     ExitCode,
     NetworkError,
-    SlowlaneError,
 )
-from slowlane.core.secrets import EncryptedFileBackend, SecretStore, SessionData
 
 runner = CliRunner()
 
@@ -48,14 +38,6 @@ def isolated_run_flags(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 def _config_patch() -> AbstractContextManager[MagicMock]:
     return patch("slowlane.cli.main.SlowlaneConfig.load", return_value=SlowlaneConfig())
-
-
-def _session(cookies: dict[str, str] | None = None) -> SessionData:
-    return SessionData(
-        cookies=cookies or {"myacinfo": "myac", "DES": "des"},
-        email_hash="hash",
-        created_at=datetime.now(UTC),
-    )
 
 
 def test_version_option_exits_before_loading_config() -> None:
@@ -99,10 +81,13 @@ def test_run_writes_unexpected_error_to_stderr_without_traceback(
     assert "Traceback" not in captured.err
 
 
-def test_run_maps_click_abort_to_interrupt_exit_code(
+def test_run_maps_typer_abort_to_interrupt_exit_code(
     isolated_run_flags: None, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    with patch.object(cli_main, "app", side_effect=Abort()), pytest.raises(SystemExit) as exc_info:
+    with (
+        patch.object(cli_main, "app", side_effect=typer.Abort()),
+        pytest.raises(SystemExit) as exc_info,
+    ):
         cli_main.run()
 
     captured = capsys.readouterr()
@@ -259,35 +244,6 @@ def test_run_uses_configured_json_mode_for_parser_errors(
     assert "unknown" in payload["error"]["message"]
 
 
-def test_missing_signing_session_is_cp1252_safe_json(
-    isolated_run_flags: None,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    stdout_bytes = io.BytesIO()
-    stderr_bytes = io.BytesIO()
-    stdout = io.TextIOWrapper(stdout_bytes, encoding="cp1252", write_through=True)
-    stderr = io.TextIOWrapper(stderr_bytes, encoding="cp1252", write_through=True)
-    monkeypatch.setattr(sys, "stdout", stdout)
-    monkeypatch.setattr(sys, "stderr", stderr)
-    monkeypatch.setattr(sys, "argv", ["slowlane", "--json", "signing", "certs", "list"])
-    monkeypatch.setattr(cli_main, "console", Console(file=stdout, force_terminal=False))
-    monkeypatch.setattr(cli_main, "error_console", Console(file=stderr, force_terminal=False))
-
-    with (
-        _config_patch(),
-        patch("slowlane.cli.signing.SecretStore", return_value=MagicMock()),
-        patch("slowlane.cli.signing.get_session_auth", return_value=None),
-        pytest.raises(SystemExit) as exc_info,
-    ):
-        cli_main.run()
-
-    assert exc_info.value.code == ExitCode.AUTH_EXPIRED
-    assert stdout_bytes.getvalue() == b""
-    payload = json.loads(stderr_bytes.getvalue().decode("cp1252"))
-    assert payload["error"]["type"] == "SessionError"
-    assert payload["error"]["exit_code"] == ExitCode.AUTH_EXPIRED
-
-
 def test_environment_verbose_mode_configures_debug_logging(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -310,7 +266,7 @@ def test_subcommand_v_flag_does_not_enable_root_debug(
 
 @pytest.mark.parametrize(
     "getter",
-    [asc.get_config, env.get_config, signing.get_config, spaceauth.get_config, upload.get_config],
+    [asc.get_config, env.get_config, signing.get_config, upload.get_config],
 )
 def test_get_config_does_not_eagerly_load_default(
     getter: Callable[[typer.Context], SlowlaneConfig],
@@ -321,28 +277,6 @@ def test_get_config_does_not_eagerly_load_default(
 
     with patch.object(SlowlaneConfig, "load", side_effect=AssertionError("unexpected load")):
         assert getter(ctx) is config
-
-
-def test_asc_cli_does_not_fall_back_to_stored_session() -> None:
-    ctx = MagicMock(spec=typer.Context)
-    ctx.obj = {"config": SlowlaneConfig()}
-    secret_store = MagicMock()
-    secret_store.retrieve_default_session.return_value = _session()
-
-    with (
-        patch("slowlane.cli.asc.get_jwt_auth", return_value=None),
-        patch("slowlane.cli.asc.SecretStore", return_value=secret_store),
-        patch("slowlane.cli.asc.AppStoreConnectClient") as client_type,
-        pytest.raises(AuthExpiredError, match="API key authentication is required"),
-    ):
-        asc.get_client(ctx)
-
-    client_type.assert_not_called()
-
-
-def test_asc_client_rejects_session_only_auth() -> None:
-    with pytest.raises(AppStoreConnectError, match="require API key authentication"):
-        AppStoreConnectClient(session_auth=SessionAuth(_session()))
 
 
 @pytest.mark.parametrize(
@@ -390,22 +324,22 @@ def test_apps_get_resolves_bundle_identifier() -> None:
     client.__exit__.assert_called_once()
 
 
-def test_apps_get_missing_is_structured_json_error() -> None:
+def test_apps_get_missing_is_structured_json_error(monkeypatch, capsys) -> None:
     client = MagicMock()
     client.__enter__.return_value = client
     client.get_app.return_value = None
-
-    with _config_patch(), patch("slowlane.cli.asc.get_client", return_value=client):
-        result = runner.invoke(app, ["--json", "asc", "apps", "get", "123"])
-
-    assert result.exit_code == 1
-    assert result.stdout == ""
-    assert json.loads(result.stderr) == {
-        "error": {
-            "type": "AppStoreConnectError",
-            "message": "App not found: 123",
-            "exit_code": 1,
-        }
+    monkeypatch.setattr(sys, "argv", ["slowlane", "--json", "asc", "apps", "get", "123"])
+    with (
+        _config_patch(),
+        patch("slowlane.cli.asc.get_client", return_value=client),
+        pytest.raises(SystemExit) as error,
+    ):
+        cli_main.run()
+    output = capsys.readouterr()
+    assert error.value.code == 1
+    assert output.out == ""
+    assert json.loads(output.err) == {
+        "error": {"type": "AppStoreConnectError", "message": "App not found: 123", "exit_code": 1}
     }
 
 
@@ -450,7 +384,7 @@ def test_testflight_invite_json_output_is_raw_object() -> None:
     [
         ("github", "ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}"),
         ("gitlab", "ASC_PRIVATE_KEY: $ASC_PRIVATE_KEY"),
-        ("azure", "value: $(ASC_PRIVATE_KEY)"),
+        ("azure", "ASC_PRIVATE_KEY: $(ASC_PRIVATE_KEY)"),
         ("generic", "${ASC_PRIVATE_KEY:?ASC_PRIVATE_KEY is required}"),
     ],
 )
@@ -514,42 +448,6 @@ def test_asc_limits_must_be_positive(args: list[str]) -> None:
     get_client.assert_not_called()
 
 
-def test_upload_passes_signed_jwt_to_transporter(tmp_path: Path) -> None:
-    ipa_path = tmp_path / "App.ipa"
-    ipa_path.write_bytes(b"ipa")
-    transporter_path = tmp_path / "iTMSTransporter"
-    jwt_auth = MagicMock()
-    jwt_auth.key_id = "KEY123"
-    jwt_auth.issuer_id = "issuer-id"
-    jwt_auth.private_key = "PRIVATE KEY"
-    jwt_auth.get_token.return_value = "signed.jwt.token"
-    wrapper = MagicMock()
-    config = SlowlaneConfig()
-    config.output.verbose = True
-
-    with (
-        patch("slowlane.cli.main.SlowlaneConfig.load", return_value=config),
-        patch("slowlane.cli.upload.find_transporter", return_value=transporter_path),
-        patch("slowlane.cli.upload.SecretStore", return_value=MagicMock()),
-        patch("slowlane.cli.upload.get_jwt_auth", return_value=jwt_auth),
-        patch("slowlane.cli.upload.TransporterWrapper", return_value=wrapper) as wrapper_type,
-    ):
-        result = runner.invoke(app, ["upload", "ipa", str(ipa_path), "--validate-only"])
-
-    assert result.exit_code == 0, result.output
-    wrapper_type.assert_called_once_with(
-        transporter_path=transporter_path,
-        key_id="KEY123",
-        issuer_id="issuer-id",
-        private_key_path=None,
-        private_key="PRIVATE KEY",
-        jwt_token_provider=jwt_auth.get_token,
-        verbose=True,
-    )
-    jwt_auth.get_token.assert_not_called()
-    wrapper.validate.assert_called_once_with(ipa_path)
-
-
 @pytest.mark.parametrize(
     ("command", "filename"),
     [("ipa", "App.pkg"), ("pkg", "App.ipa")],
@@ -568,7 +466,6 @@ def test_upload_rejects_wrong_file_type(tmp_path: Path, command: str, filename: 
 @pytest.mark.parametrize(
     "args",
     [
-        ["spaceauth", "login", "--service", "invalid"],
         ["env", "print", "--platform", "invalid"],
         ["env", "setup", "--platform", "generic"],
     ],
@@ -578,471 +475,3 @@ def test_cli_rejects_invalid_choices(args: list[str]) -> None:
         result = runner.invoke(app, args)
 
     assert result.exit_code == 2
-
-
-def test_login_rejects_missing_required_cookies() -> None:
-    with (
-        _config_patch(),
-        patch("slowlane.cli.spaceauth.interactive_login", return_value=_session({"myacinfo": "x"})),
-        patch("slowlane.cli.spaceauth.SecretStore") as secret_store,
-    ):
-        result = runner.invoke(app, ["spaceauth", "login", "--email", "user@example.com"])
-
-    assert result.exit_code == 2
-    assert "Missing cookies: DES" in result.stdout
-    assert "Login successful" not in result.stdout
-    secret_store.assert_not_called()
-
-
-def test_login_without_email_prints_immediately_usable_export() -> None:
-    session = _session()
-    with (
-        _config_patch(),
-        patch("slowlane.cli.spaceauth.interactive_login", return_value=session),
-        patch("slowlane.cli.spaceauth.SecretStore") as secret_store,
-    ):
-        result = runner.invoke(app, ["spaceauth", "login"])
-
-    assert result.exit_code == 0, result.output
-    assert f'export FASTLANE_SESSION="{SessionAuth(session).to_export_string()}"' in result.stdout
-    secret_store.assert_not_called()
-
-
-def test_export_uses_default_stored_session(tmp_path: Path) -> None:
-    session = _session()
-    store = SecretStore(EncryptedFileBackend(tmp_path))
-    store.store_session("user@example.com", session)
-
-    with _config_patch(), patch("slowlane.cli.spaceauth.SecretStore", return_value=store):
-        result = runner.invoke(app, ["spaceauth", "export"])
-
-    assert result.exit_code == 0, result.output
-    assert result.stdout.strip() == (
-        f'export FASTLANE_SESSION="{SessionAuth(session).to_export_string()}"'
-    )
-
-
-def test_verify_returns_remote_failure_exit_code() -> None:
-    auth = SessionAuth(_session())
-    portal = MagicMock()
-    portal.__enter__.return_value = portal
-    portal.list_teams.side_effect = NetworkError("offline")
-
-    with (
-        _config_patch(),
-        patch("slowlane.cli.spaceauth.get_session_auth", return_value=auth),
-        patch("slowlane.devportal.client.DeveloperPortalClient", return_value=portal),
-    ):
-        result = runner.invoke(app, ["spaceauth", "verify"])
-
-    assert result.exit_code == 4
-    assert "Could not verify session via API" in result.stdout
-    portal.__exit__.assert_called_once()
-
-
-def test_certificate_creation_requires_csr() -> None:
-    with _config_patch():
-        result = runner.invoke(app, ["signing", "certs", "create", "--type", "development"])
-
-    assert result.exit_code == 2
-    assert "--csr" in unstyle(result.output)
-
-
-def test_certificate_creation_uses_existing_csr(tmp_path: Path) -> None:
-    csr_path = tmp_path / "request.csr"
-    csr_path.write_text("CSR CONTENT", encoding="utf-8")
-    client = MagicMock()
-    client.create_certificate.return_value = {"certificateId": "cert-id"}
-    client_manager = MagicMock()
-    client_manager.__enter__.return_value = client
-
-    with (
-        _config_patch(),
-        patch("slowlane.cli.signing.require_session_auth", return_value=MagicMock()),
-        patch("slowlane.cli.signing.DeveloperPortalClient", return_value=client_manager),
-    ):
-        result = runner.invoke(
-            app,
-            [
-                "signing",
-                "certs",
-                "create",
-                "--type",
-                "development",
-                "--csr",
-                str(csr_path),
-            ],
-        )
-
-    assert result.exit_code == 0, result.output
-    client.create_certificate.assert_called_once_with(
-        csr_content="CSR CONTENT", cert_type="development"
-    )
-    client_manager.__exit__.assert_called_once()
-
-
-def test_profile_creation_resolves_bundle_identifier() -> None:
-    client = MagicMock()
-    client.list_app_ids.return_value = [{"id": "portal-app-id", "identifier": "com.example.app"}]
-    client.create_profile.return_value = {"provisioningProfileId": "profile-id"}
-    client_manager = MagicMock()
-    client_manager.__enter__.return_value = client
-
-    with (
-        _config_patch(),
-        patch("slowlane.cli.signing.require_session_auth", return_value=MagicMock()),
-        patch("slowlane.cli.signing.DeveloperPortalClient", return_value=client_manager),
-    ):
-        result = runner.invoke(
-            app,
-            [
-                "signing",
-                "profiles",
-                "create",
-                "--name",
-                "Example",
-                "--type",
-                "appstore",
-                "--bundle-id",
-                "com.example.app",
-                "--cert",
-                "cert-id",
-            ],
-        )
-
-    assert result.exit_code == 0, result.output
-    client.list_app_ids.assert_called_once_with()
-    client.create_profile.assert_called_once_with(
-        name="Example",
-        bundle_id="portal-app-id",
-        profile_type="appstore",
-        certificate_ids=["cert-id"],
-        device_ids=None,
-    )
-    client_manager.__exit__.assert_called_once()
-
-
-@pytest.mark.parametrize("profile_type", ["development", "adhoc"])
-def test_device_profile_requires_device(profile_type: str) -> None:
-    with (
-        _config_patch(),
-        patch("slowlane.cli.signing.require_session_auth") as require_session,
-    ):
-        result = runner.invoke(
-            app,
-            [
-                "signing",
-                "profiles",
-                "create",
-                "--name",
-                "Development",
-                "--type",
-                profile_type,
-                "--bundle-id",
-                "com.example.app",
-                "--cert",
-                "cert-id",
-            ],
-        )
-
-    assert result.exit_code == 2
-    assert "at least one --device is required" in unstyle(result.output)
-    require_session.assert_not_called()
-
-
-def test_appstore_profile_rejects_device() -> None:
-    with (
-        _config_patch(),
-        patch("slowlane.cli.signing.require_session_auth") as require_session,
-    ):
-        result = runner.invoke(
-            app,
-            [
-                "signing",
-                "profiles",
-                "create",
-                "--name",
-                "App Store",
-                "--type",
-                "appstore",
-                "--bundle-id",
-                "com.example.app",
-                "--cert",
-                "cert-id",
-                "--device",
-                "device-id",
-            ],
-        )
-
-    assert result.exit_code == 2
-    assert "--device is not allowed" in unstyle(result.output)
-    require_session.assert_not_called()
-
-
-def test_profile_creation_passes_repeated_devices() -> None:
-    client = MagicMock()
-    client.list_app_ids.return_value = [
-        {"appIdId": "portal-app-id", "identifier": "com.example.app"}
-    ]
-    client.create_profile.return_value = {"provisioningProfileId": "profile-id"}
-    client_manager = MagicMock()
-    client_manager.__enter__.return_value = client
-
-    with (
-        _config_patch(),
-        patch("slowlane.cli.signing.require_session_auth", return_value=MagicMock()),
-        patch("slowlane.cli.signing.DeveloperPortalClient", return_value=client_manager),
-    ):
-        result = runner.invoke(
-            app,
-            [
-                "signing",
-                "profiles",
-                "create",
-                "--name",
-                "Development",
-                "--type",
-                "development",
-                "--bundle-id",
-                "com.example.app",
-                "--cert",
-                "cert-id",
-                "--device",
-                "device-1",
-                "--device",
-                "device-2",
-            ],
-        )
-
-    assert result.exit_code == 0, result.output
-    client.create_profile.assert_called_once_with(
-        name="Development",
-        bundle_id="portal-app-id",
-        profile_type="development",
-        certificate_ids=["cert-id"],
-        device_ids=["device-1", "device-2"],
-    )
-
-
-def test_profile_creation_auto_selects_only_compatible_active_certificate() -> None:
-    client = MagicMock()
-    client.list_app_ids.return_value = [
-        {"appIdId": "portal-app-id", "identifier": "com.example.app"}
-    ]
-    client.list_certificates.return_value = [
-        {
-            "certificateId": "development",
-            "certificateType": "IOS_DEVELOPMENT",
-            "status": "ACTIVE",
-            "expirationDate": "2099-01-01T00:00:00Z",
-        },
-        {
-            "certificateId": "expired",
-            "certificateType": "IOS_DISTRIBUTION",
-            "status": "ACTIVE",
-            "expirationDate": "2020-01-01T00:00:00Z",
-        },
-        {
-            "certificateId": "revoked",
-            "certificateType": "IOS_DISTRIBUTION",
-            "status": "REVOKED",
-            "expirationDate": "2099-01-01T00:00:00Z",
-        },
-        {
-            "certificateId": "distribution",
-            "certificateType": "IOS_DISTRIBUTION",
-            "statusString": "Issued",
-            "expirationDate": "2099-01-01T00:00:00Z",
-        },
-    ]
-    client.create_profile.return_value = {"provisioningProfileId": "profile-id"}
-    client_manager = MagicMock()
-    client_manager.__enter__.return_value = client
-
-    with (
-        _config_patch(),
-        patch("slowlane.cli.signing.require_session_auth", return_value=MagicMock()),
-        patch("slowlane.cli.signing.DeveloperPortalClient", return_value=client_manager),
-    ):
-        result = runner.invoke(
-            app,
-            [
-                "signing",
-                "profiles",
-                "create",
-                "--name",
-                "App Store",
-                "--type",
-                "appstore",
-                "--bundle-id",
-                "com.example.app",
-            ],
-        )
-
-    assert result.exit_code == 0, result.output
-    client.create_profile.assert_called_once_with(
-        name="App Store",
-        bundle_id="portal-app-id",
-        profile_type="appstore",
-        certificate_ids=["distribution"],
-        device_ids=None,
-    )
-
-
-def test_profile_creation_rejects_ambiguous_automatic_certificate() -> None:
-    client = MagicMock()
-    client.list_app_ids.return_value = [
-        {"appIdId": "portal-app-id", "identifier": "com.example.app"}
-    ]
-    client.list_certificates.return_value = [
-        {
-            "certificateId": certificate_id,
-            "certificateType": "IOS_DISTRIBUTION",
-            "status": "ACTIVE",
-            "expirationDate": "2099-01-01T00:00:00Z",
-        }
-        for certificate_id in ("cert-1", "cert-2")
-    ]
-    client_manager = MagicMock()
-    client_manager.__enter__.return_value = client
-
-    with (
-        _config_patch(),
-        patch("slowlane.cli.signing.require_session_auth", return_value=MagicMock()),
-        patch("slowlane.cli.signing.DeveloperPortalClient", return_value=client_manager),
-    ):
-        result = runner.invoke(
-            app,
-            [
-                "signing",
-                "profiles",
-                "create",
-                "--name",
-                "App Store",
-                "--type",
-                "appstore",
-                "--bundle-id",
-                "com.example.app",
-            ],
-        )
-
-    assert result.exit_code == 1
-    assert "Specify one with --cert: cert-1, cert-2" in result.output
-    client.create_profile.assert_not_called()
-
-
-def test_automatic_certificate_selection_requires_active_unexpired_match() -> None:
-    certificates = [
-        {
-            "certificateId": "expired",
-            "certificateType": "IOS_DISTRIBUTION",
-            "status": "ACTIVE",
-            "expirationDate": "2020-01-01T00:00:00Z",
-        },
-        {
-            "certificateId": "inactive",
-            "certificateType": "IOS_DISTRIBUTION",
-            "status": "REVOKED",
-            "expirationDate": "2099-01-01T00:00:00Z",
-        },
-    ]
-
-    with pytest.raises(SlowlaneError, match="No active, unexpired distribution certificate"):
-        signing._select_certificate_id(certificates, "appstore")
-
-
-def test_signing_json_output_preserves_bracketed_values() -> None:
-    certificates = [
-        {
-            "certificateId": "[certificate-id]",
-            "name": "[bold]literal markup[/bold]",
-            "certificateType": "IOS_DISTRIBUTION",
-        }
-    ]
-    client = MagicMock()
-    client.list_certificates.return_value = certificates
-    client_manager = MagicMock()
-    client_manager.__enter__.return_value = client
-
-    with (
-        _config_patch(),
-        patch("slowlane.cli.signing.require_session_auth", return_value=MagicMock()),
-        patch("slowlane.cli.signing.DeveloperPortalClient", return_value=client_manager),
-    ):
-        result = runner.invoke(app, ["--json", "signing", "certs", "list"])
-
-    assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout) == certificates
-    assert "[bold]literal markup[/bold]" in result.stdout
-
-
-@pytest.mark.parametrize(
-    ("command", "method"),
-    [
-        (["signing", "certs", "list"], "list_certificates"),
-        (["signing", "profiles", "list"], "list_profiles"),
-    ],
-)
-def test_signing_empty_lists_are_valid_json(command: list[str], method: str) -> None:
-    client = MagicMock()
-    getattr(client, method).return_value = []
-    client_manager = MagicMock()
-    client_manager.__enter__.return_value = client
-
-    with (
-        _config_patch(),
-        patch("slowlane.cli.signing.require_session_auth", return_value=MagicMock()),
-        patch("slowlane.cli.signing.DeveloperPortalClient", return_value=client_manager),
-    ):
-        result = runner.invoke(app, ["--json", *command])
-
-    assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout) == []
-
-
-@pytest.mark.parametrize(
-    ("error", "exit_code"),
-    [
-        (NetworkError("offline"), ExitCode.NETWORK_ERROR),
-        (AuthExpiredError("expired"), ExitCode.AUTH_EXPIRED),
-    ],
-)
-def test_signing_preserves_error_exit_code(error: SlowlaneError, exit_code: ExitCode) -> None:
-    client = MagicMock()
-    client.list_certificates.side_effect = error
-    client_manager = MagicMock()
-    client_manager.__enter__.return_value = client
-
-    with (
-        _config_patch(),
-        patch("slowlane.cli.signing.require_session_auth", return_value=MagicMock()),
-        patch("slowlane.cli.signing.DeveloperPortalClient", return_value=client_manager),
-    ):
-        result = runner.invoke(app, ["signing", "certs", "list"])
-
-    assert result.exit_code == exit_code
-    assert str(error) in result.stderr
-
-
-def test_signing_emits_structured_json_error() -> None:
-    client = MagicMock()
-    client.list_certificates.side_effect = NetworkError("offline")
-    client_manager = MagicMock()
-    client_manager.__enter__.return_value = client
-
-    with (
-        _config_patch(),
-        patch("slowlane.cli.signing.require_session_auth", return_value=MagicMock()),
-        patch("slowlane.cli.signing.DeveloperPortalClient", return_value=client_manager),
-    ):
-        result = runner.invoke(app, ["--json", "signing", "certs", "list"])
-
-    assert result.exit_code == ExitCode.NETWORK_ERROR
-    assert json.loads(result.stderr) == {
-        "error": {
-            "type": "NetworkError",
-            "message": "offline",
-            "exit_code": ExitCode.NETWORK_ERROR,
-        }
-    }
-    assert result.stdout == ""

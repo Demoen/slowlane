@@ -35,7 +35,7 @@ class SlowlaneError(Exception):
 
 
 class AuthExpiredError(SlowlaneError):
-    """Session or token has expired and needs to be refreshed."""
+    """Token has expired and needs to be refreshed."""
 
     exit_code = ExitCode.AUTH_EXPIRED
     message = "Authentication expired"
@@ -68,10 +68,10 @@ class NetworkError(SlowlaneError):
 
 
 class AppleFlowChangedError(SlowlaneError):
-    """Apple changed their login flow or API structure."""
+    """Apple returned an unexpected API response."""
 
     exit_code = ExitCode.APPLE_FLOW_CHANGED
-    message = "Apple flow has changed - please report this issue"
+    message = "Unexpected Apple API response - please report this issue"
 
 
 class InvalidArgumentsError(SlowlaneError):
@@ -99,23 +99,10 @@ class JWTError(SlowlaneError):
     message = "JWT error"
 
 
-class SessionError(SlowlaneError):
-    """Session authentication error."""
-
-    exit_code = ExitCode.AUTH_EXPIRED
-    message = "Session error"
-
-
 class TransporterError(SlowlaneError):
     """iTunes Transporter error."""
 
     message = "Transporter error"
-
-
-class DeveloperPortalError(SlowlaneError):
-    """Developer Portal API error."""
-
-    message = "Developer Portal error"
 
 
 class AppStoreConnectError(SlowlaneError):

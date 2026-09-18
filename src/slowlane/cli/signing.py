@@ -1,517 +1,294 @@
-"""Signing commands for certificates and provisioning profiles."""
+"""Signing assets managed through the App Store Connect API."""
 
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+import os
+import sys
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import typer
-from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 
-from slowlane.auth.session_auth import SessionAuth, get_session_auth
-from slowlane.core.config import SlowlaneConfig
-from slowlane.core.errors import RateLimitError, SessionError, SlowlaneError
-from slowlane.core.secrets import SecretStore
-from slowlane.devportal.client import DeveloperPortalClient
+from slowlane.asc.client import normalize_certificate_type, normalize_profile_type, validate_csr
+from slowlane.cli.asc import get_client, get_config, get_console, progress
+from slowlane.core.errors import InvalidArgumentsError, SlowlaneError
 
 app = typer.Typer(
     name="signing",
-    help="Certificate and provisioning profile management.",
+    help="Manage signing assets with a team App Store Connect API key.",
     no_args_is_help=True,
 )
-
-certs_app = typer.Typer(name="certs", help="Certificate management")
-profiles_app = typer.Typer(name="profiles", help="Provisioning profile management")
-
+certs_app = typer.Typer(name="certs", help="Certificate management", no_args_is_help=True)
+profiles_app = typer.Typer(name="profiles", help="Provisioning profiles", no_args_is_help=True)
+devices_app = typer.Typer(
+    name="devices", help="Registered development devices", no_args_is_help=True
+)
 app.add_typer(certs_app, name="certs")
 app.add_typer(profiles_app, name="profiles")
-
-_PROFILE_TYPE_ALIASES = {
-    "development": "development",
-    "appstore": "appstore",
-    "app-store": "appstore",
-    "app_store": "appstore",
-    "adhoc": "adhoc",
-    "ad-hoc": "adhoc",
-    "ad_hoc": "adhoc",
-}
-_COMPATIBLE_CERTIFICATE_TYPES = {
-    "development": {"DEVELOPMENT", "IOS_DEVELOPMENT", "APPLE_DEVELOPMENT"},
-    "appstore": {"DISTRIBUTION", "IOS_DISTRIBUTION", "APPLE_DISTRIBUTION"},
-    "adhoc": {"DISTRIBUTION", "IOS_DISTRIBUTION", "APPLE_DISTRIBUTION"},
-}
-_ACTIVE_CERTIFICATE_STATUSES = {"ACTIVE", "VALID", "ISSUED", "ENABLED"}
+app.add_typer(devices_app, name="devices")
 
 
-def get_console(ctx: typer.Context) -> Console:
-    if ctx.obj is None:
-        return Console()
-    return cast(Console, ctx.obj.get("console", Console()))
-
-
-def get_config(ctx: typer.Context) -> SlowlaneConfig:
-    if ctx.obj is not None:
-        config = ctx.obj.get("config")
-        if isinstance(config, SlowlaneConfig):
-            return config
-    return SlowlaneConfig.load()
-
-
-def require_session_auth() -> SessionAuth:
-    session = get_session_auth(secret_store=SecretStore())
-    if not session:
-        raise SessionError(
-            "Developer Portal session authentication is required. Run "
-            "'slowlane spaceauth login --service developer'."
-        )
-    return session
-
-
-def _handle_error(e: SlowlaneError, *, json_output: bool) -> None:
-    if json_output:
-        typer.echo(
-            json.dumps(
-                {
-                    "error": {
-                        "type": type(e).__name__,
-                        "message": str(e),
-                        "exit_code": int(e.exit_code),
-                    }
-                },
-                separators=(",", ":"),
-            ),
-            err=True,
-        )
-        raise typer.Exit(code=e.exit_code) from e
-    if isinstance(e, RateLimitError):
-        hint = f" Retry after {e.retry_after}s." if e.retry_after else ""
-        typer.echo(f"Error: Rate limited by Apple API.{hint}", err=True)
-        raise typer.Exit(code=e.exit_code) from e
-    typer.echo(f"Error: {e}", err=True)
-    raise typer.Exit(code=e.exit_code) from e
-
-
-def _resolve_app_id(client: DeveloperPortalClient, bundle_id: str) -> str:
-    for app_id in client.list_app_ids():
-        if app_id.get("identifier") != bundle_id:
-            continue
-        resource_id = app_id.get("appIdId") or app_id.get("id")
-        if isinstance(resource_id, str) and resource_id:
-            return resource_id
-        break
-    raise SlowlaneError(f"No Developer Portal App ID found for bundle identifier {bundle_id}")
-
-
-def _normalize_identifier(value: object) -> str:
-    return str(value).strip().replace("-", "_").replace(" ", "_").upper()
-
-
-def _certificate_expiration(certificate: dict[str, Any]) -> datetime | None:
-    value = certificate.get("expirationDate")
-    if isinstance(value, datetime):
-        expiration = value
-    elif isinstance(value, str) and value.strip():
-        try:
-            expiration = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-        except ValueError:
-            return None
+def _result(ctx: typer.Context, resource: dict[str, Any], message: str) -> None:
+    if get_config(ctx).output.format == "json":
+        typer.echo(json.dumps(resource, indent=2))
     else:
-        return None
-
-    if expiration.tzinfo is None:
-        return expiration.replace(tzinfo=UTC)
-    return expiration.astimezone(UTC)
+        get_console(ctx).print(message, markup=False)
 
 
-def _certificate_is_active(certificate: dict[str, Any]) -> bool:
-    if certificate.get("isActive") is False or certificate.get("revoked") is True:
-        return False
-    if certificate.get("isActive") is True:
-        return True
+def _list(
+    ctx: typer.Context,
+    resources: list[dict[str, Any]],
+    title: str,
+    columns: list[tuple[str, str]],
+) -> None:
+    if get_config(ctx).output.format == "json":
+        typer.echo(json.dumps(resources, indent=2))
+        return
+    if not resources:
+        get_console(ctx).print(f"No {title.lower()} found.")
+        return
+    table = Table(title=title)
+    table.add_column("ID", style="cyan")
+    for label, _ in columns:
+        table.add_column(label)
+    for resource in resources:
+        attributes = resource.get("attributes", {})
+        table.add_row(resource["id"], *(str(attributes.get(field) or "") for _, field in columns))
+    get_console(ctx).print(table)
 
-    status = next(
-        (
-            certificate[key]
-            for key in ("status", "certificateStatus", "statusString", "statusCode")
-            if certificate.get(key) is not None
-        ),
-        None,
-    )
-    if isinstance(status, bool):
-        return status
-    if isinstance(status, int):
-        return status == 0
-    return _normalize_identifier(status) in _ACTIVE_CERTIFICATE_STATUSES
 
-
-def _select_certificate_id(certificates: list[dict[str, Any]], profile_type: str) -> str:
-    compatible_types = _COMPATIBLE_CERTIFICATE_TYPES[profile_type]
-    now = datetime.now(UTC)
-    candidates: list[str] = []
-
-    for certificate in certificates:
-        certificate_type = _normalize_identifier(certificate.get("certificateType", ""))
-        expiration = _certificate_expiration(certificate)
-        certificate_id = certificate.get("certificateId") or certificate.get("id")
-        if (
-            certificate_type in compatible_types
-            and _certificate_is_active(certificate)
-            and expiration is not None
-            and expiration > now
-            and isinstance(certificate_id, str)
-            and certificate_id
-        ):
-            candidates.append(certificate_id)
-
-    certificate_kind = "development" if profile_type == "development" else "distribution"
-    if not candidates:
-        raise SlowlaneError(
-            f"No active, unexpired {certificate_kind} certificate is compatible with "
-            f"the {profile_type} profile. Create one or specify its ID with --cert."
+def _confirm(ctx: typer.Context, force: bool, message: str) -> None:
+    if force:
+        return
+    if get_config(ctx).output.format == "json" or not sys.stdin.isatty():
+        raise InvalidArgumentsError(
+            "Use --force to confirm this action in non-interactive or JSON mode"
         )
-    if len(candidates) > 1:
-        choices = ", ".join(candidates)
-        raise SlowlaneError(
-            f"Multiple active, unexpired {certificate_kind} certificates are compatible "
-            f"with the {profile_type} profile. Specify one with --cert: {choices}"
+    if not typer.confirm(message, err=True):
+        raise typer.Abort()
+
+
+def _check_destination(path: Path) -> None:
+    if path.exists():
+        raise InvalidArgumentsError(f"Output already exists: {path}")
+    if not path.parent.is_dir():
+        raise InvalidArgumentsError(f"Output directory does not exist: {path.parent}")
+
+
+def _write_download(ctx: typer.Context, path: Path, content: bytes, resource_id: str) -> None:
+    try:
+        descriptor = os.open(
+            path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600
         )
-    return candidates[0]
+    except OSError as exc:
+        raise SlowlaneError(f"Unable to save download to {path}: {exc}") from exc
+    try:
+        output = os.fdopen(descriptor, "wb")
+    except BaseException:
+        os.close(descriptor)
+        path.unlink(missing_ok=True)
+        raise
+    try:
+        with output:
+            output.write(content)
+    except BaseException as exc:
+        path.unlink(missing_ok=True)
+        if isinstance(exc, OSError):
+            raise SlowlaneError(f"Unable to save download to {path}: {exc}") from exc
+        raise
+    _result(ctx, {"id": resource_id, "path": str(path), "bytes": len(content)}, f"Saved {path}")
 
 
 @certs_app.command("list")
 def certs_list(
     ctx: typer.Context,
-    cert_type: str | None = typer.Option(
-        None,
-        "--type",
-        "-t",
-        help="Certificate type: development, distribution, etc.",
-    ),
-    team_id: str | None = typer.Option(
-        None, "--team-id", help="Team ID (required for multiple teams)"
-    ),
+    cert_type: str | None = typer.Option(None, "--type", "-t", help="Signing certificate type"),
 ) -> None:
     """List signing certificates."""
-    console = get_console(ctx)
-    config = get_config(ctx)
-    session = require_session_auth()
-    effective_team_id = team_id or config.devportal.team_id
-
-    try:
-        with (
-            console.status("[bold blue]Fetching certificates...[/bold blue]"),
-            DeveloperPortalClient(
-                session_auth=session, config=config, team_id=effective_team_id
-            ) as client,
-        ):
-            certs = client.list_certificates(cert_type=cert_type)
-    except SlowlaneError as e:
-        _handle_error(e, json_output=config.output.format == "json")
-        return
-
-    if config.output.format == "json":
-        typer.echo(json.dumps(certs, indent=2, default=str))
-        return
-
-    if not certs:
-        console.print("[yellow]No certificates found.[/yellow]")
-        return
-
-    table = Table(title="Certificates")
-    table.add_column("ID", style="cyan")
-    table.add_column("Name")
-    table.add_column("Type")
-    table.add_column("Expires")
-    table.add_column("Status")
-
-    for cert in certs:
-        table.add_row(
-            cert.get("certificateId", ""),
-            cert.get("name", ""),
-            cert.get("certificateType", ""),
-            cert.get("expirationDate", ""),
-            cert.get("status", ""),
-        )
-
-    console.print(table)
+    normalized = normalize_certificate_type(cert_type, for_creation=False) if cert_type else None
+    with progress(ctx, "Fetching certificates..."), get_client(ctx) as client:
+        certificates = client.list_certificates(cert_type=normalized)
+    _list(
+        ctx,
+        certificates,
+        "Certificates",
+        [
+            ("Name", "name"),
+            ("Type", "certificateType"),
+            ("Expires", "expirationDate"),
+        ],
+    )
 
 
 @certs_app.command("create")
 def certs_create(
     ctx: typer.Context,
     cert_type: str = typer.Option(
-        ...,
-        "--type",
-        "-t",
-        help="Certificate type: development or distribution",
+        ..., "--type", "-t", help="development, distribution, or supported signing type"
     ),
     csr_path: Path = typer.Option(
         ...,
         "--csr",
-        help="Path to an existing CSR file",
+        help="Existing PEM certificate signing request; retain its private key",
         exists=True,
         file_okay=True,
         dir_okay=False,
         readable=True,
         resolve_path=True,
     ),
-    team_id: str | None = typer.Option(
-        None, "--team-id", help="Team ID (required for multiple teams)"
-    ),
 ) -> None:
-    """Create a new signing certificate."""
-    console = get_console(ctx)
-    config = get_config(ctx)
-    csr_content = csr_path.read_text(encoding="utf-8")
-    if not csr_content.strip():
-        raise typer.BadParameter("CSR file is empty", param_hint="--csr")
-    session = require_session_auth()
-    effective_team_id = team_id or config.devportal.team_id
-
+    """Create a certificate from an existing, signed CSR."""
+    normalized = normalize_certificate_type(cert_type)
     try:
-        with (
-            console.status("[bold blue]Creating certificate...[/bold blue]"),
-            DeveloperPortalClient(
-                session_auth=session, config=config, team_id=effective_team_id
-            ) as client,
-        ):
-            cert = client.create_certificate(csr_content=csr_content, cert_type=cert_type)
-    except SlowlaneError as e:
-        _handle_error(e, json_output=config.output.format == "json")
-        return
-
-    console.print(f"[green]Certificate created: {cert.get('certificateId', '')}[/green]")
+        csr_content = csr_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise InvalidArgumentsError(f"Unable to read CSR: {csr_path}") from exc
+    validate_csr(csr_content)
+    with progress(ctx, "Creating certificate..."), get_client(ctx) as client:
+        certificate = client.create_certificate(csr_content=csr_content, cert_type=normalized)
+    _result(ctx, certificate, f"Certificate created: {certificate['id']}")
 
 
 @certs_app.command("revoke")
 def certs_revoke(
     ctx: typer.Context,
-    cert_id: str = typer.Argument(..., help="Certificate ID to revoke"),
-    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
-    team_id: str | None = typer.Option(
-        None, "--team-id", help="Team ID (required for multiple teams)"
-    ),
+    cert_id: str = typer.Argument(..., help="Certificate resource ID"),
+    force: bool = typer.Option(False, "--force", "-f", help="Confirm revocation without prompting"),
 ) -> None:
-    """Revoke a signing certificate.
+    """Revoke a certificate and invalidate profiles that use it."""
+    _confirm(ctx, force, f"Revoke certificate {cert_id} and invalidate its provisioning profiles?")
+    with progress(ctx, "Revoking certificate..."), get_client(ctx) as client:
+        client.revoke_certificate(cert_id)
+    _result(
+        ctx,
+        {"type": "certificates", "id": cert_id, "revoked": True},
+        f"Certificate {cert_id} revoked.",
+    )
 
-    WARNING: Revoking a certificate invalidates apps signed with it.
-    """
-    console = get_console(ctx)
-    config = get_config(ctx)
-    session = require_session_auth()
-    effective_team_id = team_id or config.devportal.team_id
 
-    if not force:
-        console.print(
-            Panel(
-                "[red bold]WARNING[/red bold]\n\n"
-                "Revoking a certificate will:\n"
-                "- Invalidate all provisioning profiles using this certificate\n"
-                "- Require re-signing apps distributed with this certificate\n"
-                "- Potentially break existing app installations\n\n"
-                "[bold]This action cannot be undone![/bold]",
-                title="Certificate Revocation",
-            )
-        )
-        confirm = typer.confirm("Are you sure you want to revoke this certificate?")
-        if not confirm:
-            raise typer.Abort()
-
-    try:
-        with (
-            console.status("[bold blue]Revoking certificate...[/bold blue]"),
-            DeveloperPortalClient(
-                session_auth=session, config=config, team_id=effective_team_id
-            ) as client,
-        ):
-            client.revoke_certificate(cert_id)
-    except SlowlaneError as e:
-        _handle_error(e, json_output=config.output.format == "json")
-        return
-
-    console.print(f"[green]Certificate {cert_id} revoked.[/green]")
+@certs_app.command("download")
+def certs_download(
+    ctx: typer.Context,
+    cert_id: str = typer.Argument(..., help="Certificate resource ID"),
+    output: Path = typer.Option(..., "--output", "-o", help="New .cer file", dir_okay=False),
+) -> None:
+    """Download a certificate as DER without overwriting files."""
+    _check_destination(output)
+    with progress(ctx, "Downloading certificate..."), get_client(ctx) as client:
+        content = client.download_certificate(cert_id)
+    _write_download(ctx, output, content, cert_id)
 
 
 @profiles_app.command("list")
 def profiles_list(
     ctx: typer.Context,
     profile_type: str | None = typer.Option(
-        None,
-        "--type",
-        "-t",
-        help="Profile type: development, appstore, adhoc, enterprise",
+        None, "--type", "-t", help="development, appstore, or adhoc"
     ),
-    app_id: str | None = typer.Option(
-        None,
-        "--app",
-        "-a",
-        help="Filter by bundle ID",
-    ),
-    team_id: str | None = typer.Option(
-        None, "--team-id", help="Team ID (required for multiple teams)"
-    ),
+    app_id: str | None = typer.Option(None, "--app", "-a", help="Filter by bundle identifier"),
 ) -> None:
     """List provisioning profiles."""
-    console = get_console(ctx)
-    config = get_config(ctx)
-    session = require_session_auth()
-    effective_team_id = team_id or config.devportal.team_id
-
-    try:
-        with (
-            console.status("[bold blue]Fetching profiles...[/bold blue]"),
-            DeveloperPortalClient(
-                session_auth=session, config=config, team_id=effective_team_id
-            ) as client,
-        ):
-            profiles = client.list_profiles(profile_type=profile_type)
-    except SlowlaneError as e:
-        _handle_error(e, json_output=config.output.format == "json")
-        return
-
-    if app_id:
-        profiles = [p for p in profiles if p.get("appId", {}).get("identifier") == app_id]
-
-    if config.output.format == "json":
-        typer.echo(json.dumps(profiles, indent=2, default=str))
-        return
-
-    if not profiles:
-        console.print("[yellow]No provisioning profiles found.[/yellow]")
-        return
-
-    table = Table(title="Provisioning Profiles")
-    table.add_column("ID", style="cyan")
-    table.add_column("Name")
-    table.add_column("Type")
-    table.add_column("Bundle ID")
-    table.add_column("Expires")
-
-    for profile in profiles:
-        table.add_row(
-            profile.get("provisioningProfileId", ""),
-            profile.get("name", ""),
-            profile.get("distributionMethod", ""),
-            profile.get("appId", {}).get("identifier", ""),
-            profile.get("expirationDate", ""),
-        )
-
-    console.print(table)
+    normalized = normalize_profile_type(profile_type) if profile_type else None
+    with progress(ctx, "Fetching profiles..."), get_client(ctx) as client:
+        profiles = client.list_profiles(profile_type=normalized, bundle_id=app_id)
+    _list(
+        ctx,
+        profiles,
+        "Provisioning profiles",
+        [
+            ("Name", "name"),
+            ("Type", "profileType"),
+            ("State", "profileState"),
+            ("Expires", "expirationDate"),
+        ],
+    )
 
 
 @profiles_app.command("create")
 def profiles_create(
     ctx: typer.Context,
     name: str = typer.Option(..., "--name", "-n", help="Profile name"),
-    profile_type: str = typer.Option(
-        ...,
-        "--type",
-        "-t",
-        help="Profile type: development, appstore, adhoc",
-    ),
-    bundle_id: str = typer.Option(..., "--bundle-id", "-b", help="Bundle ID"),
-    cert_id: str | None = typer.Option(
-        None,
-        "--cert",
-        "-c",
-        help="Certificate ID (auto-select if not provided)",
+    profile_type: str = typer.Option(..., "--type", "-t", help="development, appstore, or adhoc"),
+    bundle_id: str = typer.Option(..., "--bundle-id", "-b", help="Registered bundle identifier"),
+    cert_id: str = typer.Option(
+        ..., "--cert", "-c", help="Certificate resource ID whose private key you hold"
     ),
     device_ids: list[str] | None = typer.Option(
-        None,
-        "--device",
-        help="Device ID to include; repeat for multiple devices",
-    ),
-    team_id: str | None = typer.Option(
-        None, "--team-id", help="Team ID (required for multiple teams)"
+        None, "--device", help="Device resource ID; repeat for multiple devices"
     ),
 ) -> None:
-    """Create a new provisioning profile."""
-    normalized_profile_type = _PROFILE_TYPE_ALIASES.get(profile_type.strip().lower())
-    if normalized_profile_type is None:
-        raise typer.BadParameter("must be development, appstore, or adhoc", param_hint="--type")
-
-    normalized_device_ids = list(
-        dict.fromkeys(device_id.strip() for device_id in (device_ids or []) if device_id.strip())
-    )
-    if normalized_profile_type in {"development", "adhoc"} and not normalized_device_ids:
-        raise typer.BadParameter(
-            f"at least one --device is required for {normalized_profile_type} profiles",
-            param_hint="--device",
+    """Create a profile using an explicitly selected certificate."""
+    normalized = normalize_profile_type(profile_type)
+    if not name.strip() or not bundle_id.strip() or not cert_id.strip():
+        raise InvalidArgumentsError(
+            "Name, bundle identifier, and certificate resource ID must be non-empty"
         )
-    if normalized_profile_type == "appstore" and normalized_device_ids:
-        raise typer.BadParameter(
-            "--device is not allowed for appstore profiles", param_hint="--device"
+    devices = list(dict.fromkeys(value.strip() for value in (device_ids or []) if value.strip()))
+    if normalized == "IOS_APP_STORE" and devices:
+        raise InvalidArgumentsError("--device is not allowed for appstore profiles")
+    if normalized != "IOS_APP_STORE" and not devices:
+        raise InvalidArgumentsError(
+            "At least one --device is required for development and adhoc profiles"
         )
-
-    console = get_console(ctx)
-    config = get_config(ctx)
-    session = require_session_auth()
-    effective_team_id = team_id or config.devportal.team_id
-
-    try:
-        with (
-            console.status("[bold blue]Creating profile...[/bold blue]"),
-            DeveloperPortalClient(
-                session_auth=session, config=config, team_id=effective_team_id
-            ) as client,
-        ):
-            app_id_id = _resolve_app_id(client, bundle_id)
-            if cert_id:
-                certificate_ids = [cert_id]
-            else:
-                certificate_ids = [
-                    _select_certificate_id(client.list_certificates(), normalized_profile_type)
-                ]
-                console.print(f"[dim]Auto-selected certificate: {certificate_ids[0]}[/dim]")
-
-            profile = client.create_profile(
-                name=name,
-                bundle_id=app_id_id,
-                profile_type=normalized_profile_type,
-                certificate_ids=certificate_ids,
-                device_ids=normalized_device_ids or None,
-            )
-    except SlowlaneError as e:
-        _handle_error(e, json_output=config.output.format == "json")
-        return
-
-    console.print(f"[green]Profile created: {profile.get('provisioningProfileId', '')}[/green]")
+    with progress(ctx, "Creating profile..."), get_client(ctx) as client:
+        bundle = client.resolve_bundle_id(bundle_id.strip())
+        profile = client.create_profile(
+            name=name.strip(),
+            bundle_id=bundle["id"],
+            profile_type=normalized,
+            certificate_ids=[cert_id.strip()],
+            device_ids=devices or None,
+        )
+    _result(ctx, profile, f"Profile created: {profile['id']}")
 
 
 @profiles_app.command("delete")
 def profiles_delete(
     ctx: typer.Context,
-    profile_id: str = typer.Argument(..., help="Profile ID to delete"),
-    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
-    team_id: str | None = typer.Option(
-        None, "--team-id", help="Team ID (required for multiple teams)"
-    ),
+    profile_id: str = typer.Argument(..., help="Provisioning profile resource ID"),
+    force: bool = typer.Option(False, "--force", "-f", help="Confirm deletion without prompting"),
 ) -> None:
     """Delete a provisioning profile."""
-    console = get_console(ctx)
-    config = get_config(ctx)
-    session = require_session_auth()
-    effective_team_id = team_id or config.devportal.team_id
+    _confirm(ctx, force, f"Delete profile {profile_id}?")
+    with progress(ctx, "Deleting profile..."), get_client(ctx) as client:
+        client.delete_profile(profile_id)
+    _result(
+        ctx,
+        {"type": "profiles", "id": profile_id, "deleted": True},
+        f"Profile {profile_id} deleted.",
+    )
 
-    if not force:
-        confirm = typer.confirm(f"Delete profile {profile_id}?")
-        if not confirm:
-            raise typer.Abort()
 
-    try:
-        with (
-            console.status("[bold blue]Deleting profile...[/bold blue]"),
-            DeveloperPortalClient(
-                session_auth=session, config=config, team_id=effective_team_id
-            ) as client,
-        ):
-            client.delete_profile(profile_id)
-    except SlowlaneError as e:
-        _handle_error(e, json_output=config.output.format == "json")
-        return
+@profiles_app.command("download")
+def profiles_download(
+    ctx: typer.Context,
+    profile_id: str = typer.Argument(..., help="Provisioning profile resource ID"),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="New .mobileprovision file", dir_okay=False
+    ),
+) -> None:
+    """Download a provisioning profile without overwriting files."""
+    _check_destination(output)
+    with progress(ctx, "Downloading profile..."), get_client(ctx) as client:
+        content = client.download_profile(profile_id)
+    _write_download(ctx, output, content, profile_id)
 
-    console.print(f"[green]Profile {profile_id} deleted.[/green]")
+
+@devices_app.command("list")
+def devices_list(ctx: typer.Context) -> None:
+    """List device resource IDs for profile creation."""
+    with progress(ctx, "Fetching devices..."), get_client(ctx) as client:
+        devices = client.list_devices()
+    _list(
+        ctx,
+        devices,
+        "Devices",
+        [
+            ("Name", "name"),
+            ("UDID", "udid"),
+            ("Platform", "platform"),
+            ("Status", "status"),
+        ],
+    )

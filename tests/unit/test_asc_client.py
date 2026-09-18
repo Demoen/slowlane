@@ -1,481 +1,224 @@
-"""Unit tests for App Store Connect API client."""
-
 from __future__ import annotations
 
+import json
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from slowlane.asc.client import AppStoreConnectClient
 from slowlane.auth.jwt_auth import JWTAuth
-from slowlane.core.errors import AppStoreConnectError
+from slowlane.core.config import SlowlaneConfig
+from slowlane.core.errors import AppStoreConnectError, InvalidArgumentsError
 
 
-class TestAppStoreConnectClient:
-    """Tests for AppStoreConnectClient."""
-
-    @pytest.fixture
-    def mock_jwt_auth(self) -> MagicMock:
-        """Create a mock JWT auth."""
-        auth = MagicMock(spec=JWTAuth)
-        auth.get_token.return_value = "mock_jwt_token_12345"
-        return auth
-
-    @pytest.fixture
-    def mock_http_response(self) -> dict:
-        """Standard API response structure."""
-        return {
-            "data": [],
-            "links": {"self": "https://api.appstoreconnect.apple.com/v1/apps"},
-        }
-
-    def test_client_initialization_with_jwt(self, mock_jwt_auth: MagicMock) -> None:
-        """Test client initializes correctly with JWT auth."""
-        with patch("slowlane.core.base_client.AppleHTTPClient"):
-            client = AppStoreConnectClient(jwt_auth=mock_jwt_auth)
-            assert client._jwt_auth == mock_jwt_auth
-
-    def test_client_initialization_without_auth(self) -> None:
-        with (
-            patch("slowlane.core.base_client.AppleHTTPClient"),
-            pytest.raises(AppStoreConnectError, match="API key authentication"),
-        ):
-            AppStoreConnectClient()
-
-    def test_client_context_manager(self, mock_jwt_auth: MagicMock) -> None:
-        """Test client works as context manager."""
-        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
-            mock_instance = MagicMock()
-            mock_http.return_value = mock_instance
-
-            with AppStoreConnectClient(jwt_auth=mock_jwt_auth) as client:
-                assert client is not None
-
-            mock_instance.close.assert_called_once()
+def resource(kind: str, resource_id: str = "id-1", **attributes: Any) -> dict[str, Any]:
+    return {"type": kind, "id": resource_id, "attributes": attributes}
 
 
-class TestAppStoreConnectClientApps:
-    """Tests for app-related API methods."""
+@contextmanager
+def api_client(
+    responses: list[dict[str, Any] | httpx.Response],
+    key_type: str = "team",
+) -> Iterator[tuple[AppStoreConnectClient, list[httpx.Request]]]:
+    requests: list[httpx.Request] = []
+    pending = list(responses)
 
-    @pytest.fixture
-    def client_with_mock_http(self) -> tuple[AppStoreConnectClient, MagicMock]:
-        """Create client with mocked HTTP layer."""
-        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
-            mock_instance = MagicMock()
-            mock_http.return_value = mock_instance
-
-            mock_jwt = MagicMock(spec=JWTAuth)
-            mock_jwt.get_token.return_value = "test_token"
-
-            client = AppStoreConnectClient(jwt_auth=mock_jwt)
-            return client, mock_instance
-
-    def test_list_apps_returns_empty_list(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        """Test list_apps returns empty list when no apps."""
-        client, mock_http = client_with_mock_http
-        mock_http.get_json.return_value = {"data": [], "links": {}}
-
-        result = client.list_apps()
-
-        assert result == []
-        mock_http.get_json.assert_called()
-
-    def test_list_apps_returns_apps(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        """Test list_apps returns apps correctly."""
-        client, mock_http = client_with_mock_http
-        mock_apps = [
-            {
-                "id": "123456789",
-                "type": "apps",
-                "attributes": {
-                    "name": "Test App",
-                    "bundleId": "com.example.testapp",
-                    "sku": "TESTSKU001",
-                    "primaryLocale": "en-US",
-                },
-            },
-            {
-                "id": "987654321",
-                "type": "apps",
-                "attributes": {
-                    "name": "Another App",
-                    "bundleId": "com.example.anotherapp",
-                    "sku": "TESTSKU002",
-                    "primaryLocale": "en-US",
-                },
-            },
-        ]
-        mock_http.get_json.return_value = {"data": mock_apps, "links": {}}
-
-        result = client.list_apps()
-
-        assert len(result) == 2
-        assert result[0]["id"] == "123456789"
-        assert result[0]["attributes"]["name"] == "Test App"
-        assert result[1]["id"] == "987654321"
-
-    def test_get_app_by_id(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        """Test get_app returns single app."""
-        client, mock_http = client_with_mock_http
-        mock_app = {
-            "id": "123456789",
-            "type": "apps",
-            "attributes": {
-                "name": "Test App",
-                "bundleId": "com.example.testapp",
-            },
-        }
-        mock_http.get_json.return_value = {"data": mock_app}
-
-        result = client.get_app("123456789")
-
-        assert result["id"] == "123456789"
-        assert result["attributes"]["name"] == "Test App"
-
-    def test_get_app_by_bundle_id(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        """Test get_app_by_bundle_id finds app."""
-        client, mock_http = client_with_mock_http
-        mock_http.get_json.return_value = {
-            "data": [
-                {
-                    "id": "123",
-                    "attributes": {"bundleId": "com.example.test"},
-                }
-            ]
-        }
-
-        result = client.get_app_by_bundle_id("com.example.test")
-
-        assert result is not None
-        assert result["id"] == "123"
-
-    def test_get_app_by_bundle_id_not_found(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        """Test get_app_by_bundle_id returns None when not found."""
-        client, mock_http = client_with_mock_http
-        mock_http.get_json.return_value = {"data": []}
-
-        result = client.get_app_by_bundle_id("com.nonexistent.app")
-
-        assert result is None
-
-
-class TestAppStoreConnectClientBuilds:
-    """Tests for build-related API methods."""
-
-    @pytest.fixture
-    def client_with_mock_http(self) -> tuple[AppStoreConnectClient, MagicMock]:
-        """Create client with mocked HTTP layer."""
-        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
-            mock_instance = MagicMock()
-            mock_http.return_value = mock_instance
-
-            mock_jwt = MagicMock(spec=JWTAuth)
-            mock_jwt.get_token.return_value = "test_token"
-
-            client = AppStoreConnectClient(jwt_auth=mock_jwt)
-            return client, mock_instance
-
-    def test_list_builds(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        """Test list_builds returns builds."""
-        client, mock_http = client_with_mock_http
-        mock_builds = [
-            {
-                "id": "build-1",
-                "type": "builds",
-                "attributes": {
-                    "version": "1.0.0",
-                    "uploadedDate": "2024-01-15T10:30:00Z",
-                    "processingState": "VALID",
-                },
-            }
-        ]
-        mock_http.get_json.return_value = {"data": mock_builds, "links": {}}
-
-        result = client.list_builds()
-
-        assert len(result) == 1
-        assert result[0]["id"] == "build-1"
-        assert result[0]["attributes"]["version"] == "1.0.0"
-
-    def test_list_builds_filtered_by_app(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        """Test list_builds with app filter."""
-        client, mock_http = client_with_mock_http
-        mock_http.get_json.return_value = {"data": [], "links": {}}
-
-        client.list_builds(app_id="app-123")
-
-        # Verify the filter was passed
-        call_args = mock_http.get_json.call_args
-        assert call_args is not None
-
-    def test_get_build(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        """Test get_build returns single build."""
-        client, mock_http = client_with_mock_http
-        mock_http.get_json.return_value = {
-            "data": {
-                "id": "build-123",
-                "attributes": {"version": "2.0.0"},
-            }
-        }
-
-        result = client.get_build("build-123")
-
-        assert result["id"] == "build-123"
-        assert result["attributes"]["version"] == "2.0.0"
-
-    def test_get_latest_build(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        """Test get_latest_build returns most recent."""
-        client, mock_http = client_with_mock_http
-        mock_http.get_json.return_value = {
-            "data": [{"id": "latest-build", "attributes": {"version": "3.0.0"}}],
-            "links": {},
-        }
-
-        result = client.get_latest_build("app-123")
-
-        assert result is not None
-        assert result["id"] == "latest-build"
-        params = mock_http.get_json.call_args.kwargs["params"]
-        assert params["filter[app]"] == "app-123"
-        assert params["sort"] == "-uploadedDate"
-
-    def test_get_latest_build_no_builds(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        """Test get_latest_build returns None when no builds."""
-        client, mock_http = client_with_mock_http
-        mock_http.get_json.return_value = {"data": [], "links": {}}
-
-        result = client.get_latest_build("app-123")
-
-        assert result is None
-
-
-class TestAppStoreConnectClientTestFlight:
-    """Tests for TestFlight-related API methods."""
-
-    @pytest.fixture
-    def client_with_mock_http(self) -> tuple[AppStoreConnectClient, MagicMock]:
-        """Create client with mocked HTTP layer."""
-        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
-            mock_instance = MagicMock()
-            mock_http.return_value = mock_instance
-
-            mock_jwt = MagicMock(spec=JWTAuth)
-            mock_jwt.get_token.return_value = "test_token"
-
-            client = AppStoreConnectClient(jwt_auth=mock_jwt)
-            return client, mock_instance
-
-    def test_list_beta_testers(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        """Test list_beta_testers returns testers."""
-        client, mock_http = client_with_mock_http
-        mock_testers = [
-            {
-                "id": "tester-1",
-                "attributes": {
-                    "email": "tester@example.com",
-                    "firstName": "Test",
-                    "lastName": "User",
-                },
-            }
-        ]
-        mock_http.get_json.return_value = {"data": mock_testers, "links": {}}
-
-        result = client.list_beta_testers()
-
-        assert len(result) == 1
-        assert result[0]["attributes"]["email"] == "tester@example.com"
-
-    def test_list_beta_groups(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        """Test list_beta_groups returns groups."""
-        client, mock_http = client_with_mock_http
-        mock_groups = [
-            {
-                "id": "group-1",
-                "attributes": {
-                    "name": "Internal Testers",
-                    "publicLinkEnabled": False,
-                    "isInternalGroup": True,
-                },
-            }
-        ]
-        mock_http.get_json.return_value = {"data": mock_groups, "links": {}}
-
-        result = client.list_beta_groups()
-
-        assert len(result) == 1
-        assert result[0]["attributes"]["name"] == "Internal Testers"
-
-    def test_invite_beta_tester(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        """Test invite_beta_tester posts correctly."""
-        client, mock_http = client_with_mock_http
-        mock_http.post_json.return_value = {
-            "data": {
-                "id": "new-tester-id",
-                "attributes": {"email": "new@example.com"},
-            }
-        }
-
-        result = client.invite_beta_tester(
-            email="new@example.com",
-            group_id="group-123",
-            first_name="New",
-            last_name="Tester",
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert pending, f"Unexpected request: {request.method} {request.url}"
+        response = pending.pop(0)
+        return (
+            response if isinstance(response, httpx.Response) else httpx.Response(200, json=response)
         )
 
-        assert result["id"] == "new-tester-id"
-        mock_http.post_json.assert_called_once()
-
-    def test_add_tester_to_group_refreshes_token(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        client, mock_http = client_with_mock_http
-
-        with patch.object(client, "_refresh_token_if_needed") as refresh:
-            client.add_tester_to_group("tester-1", "group-1")
-
-        refresh.assert_called_once_with()
-        mock_http.post.assert_called_once()
+    auth = MagicMock(spec=JWTAuth)
+    auth.key_type = key_type
+    auth.get_token.return_value = "test.jwt.token"
+    transport = httpx.Client(transport=httpx.MockTransport(handler))
+    with (
+        patch("slowlane.core.http.httpx.Client", return_value=transport),
+        AppStoreConnectClient(jwt_auth=auth, config=SlowlaneConfig()) as client,
+    ):
+        yield client, requests
 
 
-class TestAppStoreConnectClientPagination:
-    """Tests for pagination handling."""
+def test_client_requires_api_key() -> None:
+    with pytest.raises(AppStoreConnectError, match="API key"):
+        AppStoreConnectClient()
 
-    @pytest.fixture
-    def client_with_mock_http(self) -> tuple[AppStoreConnectClient, MagicMock]:
-        """Create client with mocked HTTP layer."""
-        with patch("slowlane.core.base_client.AppleHTTPClient") as mock_http:
-            mock_instance = MagicMock()
-            mock_http.return_value = mock_instance
 
-            mock_jwt = MagicMock(spec=JWTAuth)
-            mock_jwt.get_token.return_value = "test_token"
+def test_client_closes_transport() -> None:
+    with api_client([]) as (client, _):
+        transport = client._http._client
+    assert transport.is_closed
 
-            client = AppStoreConnectClient(jwt_auth=mock_jwt)
-            return client, mock_instance
 
-    def test_pagination_follows_next_link(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        """Test pagination follows next links."""
-        client, mock_http = client_with_mock_http
+def test_apps_and_bundle_identifier_lookup() -> None:
+    app = resource("apps", name="[red]literal[/red]", bundleId="com.example.app")
+    with api_client([{"data": [app]}, {"data": app}, {"data": [app]}]) as (client, requests):
+        assert client.list_apps() == [app]
+        assert client.get_app("id-1") == app
+        assert client.get_app_by_bundle_id("com.example.app") == app
+    assert requests[2].url.params["filter[bundleId]"] == "com.example.app"
+    assert all(r.headers["Authorization"] == "Bearer test.jwt.token" for r in requests)
 
-        # First page
-        page1 = {
-            "data": [{"id": "1"}, {"id": "2"}],
-            "links": {"next": "https://api.appstoreconnect.apple.com/v1/apps?cursor=abc"},
-        }
-        # Second page
-        page2 = {
-            "data": [{"id": "3"}],
-            "links": {},
-        }
-        mock_http.get_json.side_effect = [page1, page2]
 
-        result = client.list_apps(limit=10)
+def test_empty_app_and_build_lookup() -> None:
+    with api_client([{"data": []}, {"data": []}]) as (client, _):
+        assert client.get_app_by_bundle_id("com.missing.app") is None
+        assert client.get_latest_build("app-1") is None
 
-        assert len(result) == 3
-        assert mock_http.get_json.call_count == 2
-        assert mock_http.get_json.call_args_list[0].kwargs["params"] == {"limit": 10}
-        assert mock_http.get_json.call_args_list[1].kwargs["params"] is None
 
-    def test_pagination_rejects_external_next_link(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        client, mock_http = client_with_mock_http
-        mock_http.get_json.return_value = {
-            "data": [{"id": "1"}],
-            "links": {"next": "https://example.com/v1/apps?cursor=abc"},
-        }
+def test_build_filters_and_latest_order() -> None:
+    build = resource("builds", version="42", processingState="VALID")
+    with api_client([{"data": [build]}, {"data": [build]}, {"data": build}]) as (client, requests):
+        assert client.list_builds("app-1", limit=25) == [build]
+        assert client.get_latest_build("app-1") == build
+        assert client.get_build("id-1") == build
+    assert dict(requests[0].url.params) == {"filter[app]": "app-1", "limit": "25"}
+    assert dict(requests[1].url.params) == {
+        "filter[app]": "app-1",
+        "sort": "-uploadedDate",
+        "limit": "1",
+    }
 
-        with pytest.raises(AppStoreConnectError, match="outside App Store Connect"):
-            client.list_apps(limit=10)
 
-        assert mock_http.get_json.call_count == 1
+def test_tester_and_group_filters_and_reads() -> None:
+    tester, group = resource("betaTesters"), resource("betaGroups")
+    with api_client([{"data": [tester]}, {"data": [group]}, {"data": tester}]) as (
+        client,
+        requests,
+    ):
+        assert client.list_beta_testers("app-1") == [tester]
+        assert client.list_beta_groups("app-1") == [group]
+        assert client.get_beta_tester("id-1") == tester
+    assert requests[0].url.params["filter[apps]"] == "app-1"
+    assert requests[1].url.params["filter[app]"] == "app-1"
 
-    def test_pagination_rejects_non_string_next_link(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        client, mock_http = client_with_mock_http
-        mock_http.get_json.return_value = {"data": [], "links": {"next": 42}}
 
-        with pytest.raises(AppStoreConnectError, match="pagination URL"):
-            client.list_apps(limit=10)
-
-    def test_pagination_rejects_repeated_empty_page(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        client, mock_http = client_with_mock_http
-        repeated_url = "https://api.appstoreconnect.apple.com/v1/apps?cursor=repeated"
-        mock_http.get_json.side_effect = [
-            {"data": [], "links": {"next": repeated_url}},
-            {"data": [], "links": {"next": repeated_url}},
+def test_pagination_preserves_server_cursor_without_repeating_initial_query() -> None:
+    next_url = "https://api.appstoreconnect.apple.com/v1/apps?cursor=next&limit=200"
+    with api_client(
+        [
+            {"data": [resource("apps", "first")], "links": {"next": next_url}},
+            {"data": [resource("apps", "second")]},
         ]
+    ) as (client, requests):
+        assert [r["id"] for r in client.list_apps(300)] == ["first", "second"]
+    assert requests[0].url.params["limit"] == "200"
+    assert str(requests[1].url) == next_url
 
-        with pytest.raises(AppStoreConnectError, match="repeated a page URL"):
-            client.list_apps(limit=10)
 
-        assert mock_http.get_json.call_count == 2
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://evil.example/v1/apps",
+        "http://api.appstoreconnect.apple.com/v1/apps",
+        "https://api.appstoreconnect.apple.com:444/v1/apps",
+        "https://user@api.appstoreconnect.apple.com/v1/apps",
+        "https://api.appstoreconnect.apple.com/v2/apps",
+        "https://api.appstoreconnect.apple.com/v1/apps#fragment",
+        123,
+    ],
+)
+def test_pagination_rejects_untrusted_links_before_request(url: object) -> None:
+    with (
+        api_client([{"data": [], "links": {"next": url}}]) as (client, requests),
+        pytest.raises(AppStoreConnectError),
+    ):
+        client.list_apps()
+    assert len(requests) == 1
 
-    def test_pagination_does_not_mutate_params(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        client, mock_http = client_with_mock_http
-        mock_http.get_json.return_value = {"data": [], "links": {}}
-        params = {"filter[app]": "app-1"}
 
-        client._paginate("builds", params=params)
+def test_pagination_rejects_repeated_page() -> None:
+    page = "https://api.appstoreconnect.apple.com/v1/apps"
+    with (
+        api_client([{"data": [], "links": {"next": page}}]) as (client, requests),
+        pytest.raises(AppStoreConnectError, match="repeated"),
+    ):
+        client.list_apps()
+    assert len(requests) == 1
 
-        assert params == {"filter[app]": "app-1"}
 
-    @pytest.mark.parametrize("limit", [0, -1])
-    def test_pagination_non_positive_limit_returns_empty(
-        self,
-        client_with_mock_http: tuple[AppStoreConnectClient, MagicMock],
-        limit: int,
-    ) -> None:
-        client, mock_http = client_with_mock_http
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"data": {}},
+        {"data": [None]},
+        {"data": [{"id": "a"}]},
+        {"data": [{"id": "a", "type": "apps", "attributes": None}]},
+        {"data": [], "links": []},
+    ],
+)
+def test_list_rejects_malformed_resources(payload: dict[str, Any]) -> None:
+    with api_client([payload]) as (client, _), pytest.raises(AppStoreConnectError):
+        client.list_apps()
 
-        assert client.list_apps(limit=limit) == []
-        mock_http.get_json.assert_not_called()
 
-    def test_pagination_respects_limit(
-        self, client_with_mock_http: tuple[AppStoreConnectClient, MagicMock]
-    ) -> None:
-        """Test pagination stops at limit."""
-        client, mock_http = client_with_mock_http
+@pytest.mark.parametrize("payload", [{}, {"data": None}, {"data": []}])
+def test_get_rejects_missing_resource(payload: dict[str, Any]) -> None:
+    with api_client([payload]) as (client, _), pytest.raises(AppStoreConnectError):
+        client.get_app("id-1")
 
-        # Return more items than limit
-        mock_http.get_json.return_value = {
-            "data": [{"id": str(i)} for i in range(10)],
-            "links": {"next": "https://api.example.com/more"},
+
+def test_limit_truncates_and_zero_does_not_request() -> None:
+    with api_client([{"data": [resource("apps", str(i)) for i in range(3)]}]) as (client, requests):
+        assert client.list_apps(0) == []
+        assert len(client.list_apps(2)) == 2
+    assert len(requests) == 1
+
+
+def test_new_tester_creation_uses_external_group_and_json_api_relationships() -> None:
+    tester = resource("betaTesters", "tester-1", email="test@example.com")
+    with api_client(
+        [
+            {"data": resource("betaGroups", "group-1", isInternalGroup=False)},
+            {"data": []},
+            {"data": tester},
+        ]
+    ) as (client, requests):
+        assert client.invite_beta_tester("test@example.com", "group-1", "Ada", "Lovelace") == tester
+    assert requests[-1].method == "POST"
+    assert json.loads(requests[-1].content) == {
+        "data": {
+            "type": "betaTesters",
+            "attributes": {"email": "test@example.com", "firstName": "Ada", "lastName": "Lovelace"},
+            "relationships": {"betaGroups": {"data": [{"type": "betaGroups", "id": "group-1"}]}},
+        }
+    }
+
+
+@pytest.mark.parametrize("already_member", [False, True])
+def test_existing_tester_is_added_once_without_recreating(already_member: bool) -> None:
+    tester = resource("betaTesters", "tester-1", email="test@example.com")
+    responses: list[dict[str, Any] | httpx.Response] = [
+        {"data": resource("betaGroups", "group-1", isInternalGroup=False)},
+        {"data": [tester]},
+        {"data": [tester] if already_member else []},
+    ]
+    if not already_member:
+        responses.append(httpx.Response(204))
+    with api_client(responses) as (client, requests):
+        assert client.invite_beta_tester("test@example.com", "group-1") == tester
+    assert requests[2].url.params["filter[betaGroups]"] == "group-1"
+    if already_member:
+        assert len(requests) == 3
+    else:
+        assert requests[-1].url.path == "/v1/betaGroups/group-1/relationships/betaTesters"
+        assert json.loads(requests[-1].content) == {
+            "data": [{"type": "betaTesters", "id": "tester-1"}]
         }
 
-        result = client.list_apps(limit=5)
 
-        assert len(result) == 5
+def test_internal_group_invitation_is_rejected_before_mutation() -> None:
+    with (
+        api_client([{"data": resource("betaGroups", isInternalGroup=True)}]) as (client, requests),
+        pytest.raises(InvalidArgumentsError, match="external"),
+    ):
+        client.invite_beta_tester("test@example.com", "group-1")
+    assert len(requests) == 1

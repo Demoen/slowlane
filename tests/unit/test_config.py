@@ -32,7 +32,7 @@ class TestSlowlaneConfig:
     def test_default_values(self) -> None:
         """Test default configuration values."""
         config = SlowlaneConfig()
-        assert config.auth.default_mode == "jwt"
+        assert config.auth.key_type == "team"
         assert config.http.timeout == 30
         assert config.http.max_retries == 3
         assert config.output.format == "text"
@@ -41,9 +41,8 @@ class TestSlowlaneConfig:
         """Test loading from nonexistent file."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "nonexistent.toml"
-            config = SlowlaneConfig.load(path)
-            # Should return default config
-            assert config.auth.default_mode == "jwt"
+            with pytest.raises(ConfigError, match="does not exist"):
+                SlowlaneConfig.load(path)
 
     def test_load_and_save(self) -> None:
         """Test saving and loading config."""
@@ -96,6 +95,12 @@ class TestSlowlaneConfig:
             ("[http]\nbackoff_factor = -0.5\n", "http.backoff_factor"),
             ("[auth]\ndefault_mode = 'invalid'\n", "auth.default_mode"),
             ("[output]\nformat = 'xml'\n", "output.format"),
+            ("[devportal]\nteam_id = 'TEAM'\n", "no longer supported"),
+            ("[auth]\nkey_type = 'session'\n", "auth.key_type"),
+            ("[auth]\nkey_type = []\n", "auth.key_type"),
+            ("[auth]\nprivate_key = 'secret'\n", "Unknown configuration option"),
+            ("auth = 'invalid'\n", "TOML table"),
+            ("[typo]\nvalue = 1\n", "Unknown configuration section"),
         ],
     )
     def test_load_rejects_invalid_values(self, tmp_path: Path, contents: str, message: str) -> None:

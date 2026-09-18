@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 
 import typer
@@ -13,7 +14,7 @@ from rich.table import Table
 from slowlane.asc.client import AppStoreConnectClient
 from slowlane.auth.jwt_auth import get_jwt_auth
 from slowlane.core.config import SlowlaneConfig
-from slowlane.core.errors import AuthExpiredError
+from slowlane.core.errors import AppStoreConnectError, AuthExpiredError
 from slowlane.core.secrets import SecretStore
 
 app = typer.Typer(
@@ -22,7 +23,6 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-# Subcommands
 apps_app = typer.Typer(name="apps", help="App management")
 builds_app = typer.Typer(name="builds", help="Build management")
 testflight_app = typer.Typer(name="testflight", help="TestFlight management")
@@ -43,7 +43,8 @@ def get_client(ctx: typer.Context) -> AppStoreConnectClient:
 
     raise AuthExpiredError(
         "App Store Connect API key authentication is required. Set "
-        "ASC_KEY_ID, ASC_ISSUER_ID, and ASC_PRIVATE_KEY or ASC_PRIVATE_KEY_PATH."
+        "ASC_KEY_ID and ASC_PRIVATE_KEY or ASC_PRIVATE_KEY_PATH. Team keys also require "
+        "ASC_ISSUER_ID; individual keys require ASC_KEY_TYPE=individual without an issuer."
     )
 
 
@@ -63,6 +64,12 @@ def get_config(ctx: typer.Context) -> SlowlaneConfig:
     return config if isinstance(config, SlowlaneConfig) else SlowlaneConfig.load()
 
 
+def progress(ctx: typer.Context, message: str) -> AbstractContextManager[Any]:
+    if get_config(ctx).output.format == "json":
+        return nullcontext()
+    return get_console(ctx).status(message)
+
+
 def output_result(
     console: Console,
     data: dict[str, Any] | list[dict[str, Any]],
@@ -78,17 +85,16 @@ def output_result(
         console.print(data)
 
 
-# Apps commands
 @apps_app.command("list")
 def apps_list(
     ctx: typer.Context,
     limit: int = typer.Option(50, "--limit", "-l", min=1, help="Max results"),
 ) -> None:
-    """List all apps in App Store Connect."""
+    """List apps in App Store Connect."""
     console = get_console(ctx)
     config = get_config(ctx)
 
-    with console.status("[bold blue]Fetching apps...[/bold blue]"), get_client(ctx) as client:
+    with progress(ctx, "[bold blue]Fetching apps...[/bold blue]"), get_client(ctx) as client:
         apps = client.list_apps(limit=limit)
 
     def build_table(data: list[dict[str, Any]]) -> None:
@@ -121,28 +127,11 @@ def apps_get(
     console = get_console(ctx)
     config = get_config(ctx)
 
-    with console.status("[bold blue]Fetching app...[/bold blue]"), get_client(ctx) as client:
+    with progress(ctx, "[bold blue]Fetching app...[/bold blue]"), get_client(ctx) as client:
         app_data = client.get_app_by_bundle_id(app_id) if "." in app_id else client.get_app(app_id)
 
     if app_data is None:
-        message = f"App not found: {app_id}"
-        if config.output.format == "json":
-            typer.echo(
-                json.dumps(
-                    {
-                        "error": {
-                            "type": "AppStoreConnectError",
-                            "message": message,
-                            "exit_code": 1,
-                        }
-                    },
-                    separators=(",", ":"),
-                ),
-                err=True,
-            )
-        else:
-            console.print(f"[red]{message}[/red]")
-        raise typer.Exit(code=1)
+        raise AppStoreConnectError(f"App not found: {app_id}")
 
     if config.output.format == "json":
         typer.echo(json.dumps(app_data, indent=2, default=str))
@@ -155,7 +144,6 @@ def apps_get(
         console.print(f"  Primary Locale: {attrs.get('primaryLocale', '')}")
 
 
-# Builds commands
 @builds_app.command("list")
 def builds_list(
     ctx: typer.Context,
@@ -166,13 +154,12 @@ def builds_list(
     console = get_console(ctx)
     config = get_config(ctx)
 
-    with console.status("[bold blue]Fetching builds...[/bold blue]"), get_client(ctx) as client:
+    with progress(ctx, "[bold blue]Fetching builds...[/bold blue]"), get_client(ctx) as client:
         builds = client.list_builds(app_id=app_id, limit=limit)
 
     def build_table(data: list[dict[str, Any]]) -> None:
         table = Table(title="Builds")
         table.add_column("ID", style="cyan")
-        table.add_column("Version")
         table.add_column("Build Number")
         table.add_column("Processing State")
         table.add_column("Uploaded")
@@ -182,7 +169,6 @@ def builds_list(
             table.add_row(
                 build.get("id", ""),
                 attrs.get("version", ""),
-                attrs.get("buildVersionIdentifier", ""),
                 attrs.get("processingState", ""),
                 attrs.get("uploadedDate", "")[:10] if attrs.get("uploadedDate") else "",
             )
@@ -202,7 +188,7 @@ def builds_latest(
     config = get_config(ctx)
 
     with (
-        console.status("[bold blue]Fetching latest build...[/bold blue]"),
+        progress(ctx, "[bold blue]Fetching latest build...[/bold blue]"),
         get_client(ctx) as client,
     ):
         build = client.get_latest_build(app_id)
@@ -220,13 +206,11 @@ def builds_latest(
         attrs = build.get("attributes", {})
         console.print("[bold]Latest Build[/bold]")
         console.print(f"  ID: {build.get('id', '')}")
-        console.print(f"  Version: {attrs.get('version', '')}")
-        console.print(f"  Build Number: {attrs.get('buildVersionIdentifier', '')}")
+        console.print(f"  Build Number: {attrs.get('version', '')}")
         console.print(f"  State: {attrs.get('processingState', '')}")
         console.print(f"  Uploaded: {attrs.get('uploadedDate', '')}")
 
 
-# TestFlight commands
 @testflight_app.command("testers")
 def testflight_testers(
     ctx: typer.Context,
@@ -237,7 +221,7 @@ def testflight_testers(
     console = get_console(ctx)
     config = get_config(ctx)
 
-    with console.status("[bold blue]Fetching testers...[/bold blue]"), get_client(ctx) as client:
+    with progress(ctx, "[bold blue]Fetching testers...[/bold blue]"), get_client(ctx) as client:
         testers = client.list_beta_testers(app_id=app_id, limit=limit)
 
     def build_table(data: list[dict[str, Any]]) -> None:
@@ -247,15 +231,17 @@ def testflight_testers(
         table.add_column("First Name")
         table.add_column("Last Name")
         table.add_column("Invite Type")
+        table.add_column("State")
 
         for tester in data:
             attrs = tester.get("attributes", {})
             table.add_row(
                 tester.get("id", ""),
-                attrs.get("email", ""),
-                attrs.get("firstName", ""),
-                attrs.get("lastName", ""),
-                attrs.get("betaTesterMetric", {}).get("betaTesterState", ""),
+                attrs.get("email") or "",
+                attrs.get("firstName") or "",
+                attrs.get("lastName") or "",
+                attrs.get("inviteType") or "",
+                attrs.get("state") or "",
             )
 
         console.print(table)
@@ -272,7 +258,7 @@ def testflight_groups(
     console = get_console(ctx)
     config = get_config(ctx)
 
-    with console.status("[bold blue]Fetching groups...[/bold blue]"), get_client(ctx) as client:
+    with progress(ctx, "[bold blue]Fetching groups...[/bold blue]"), get_client(ctx) as client:
         groups = client.list_beta_groups(app_id=app_id)
 
     def build_table(data: list[dict[str, Any]]) -> None:
@@ -308,7 +294,7 @@ def testflight_invite(
     console = get_console(ctx)
     config = get_config(ctx)
 
-    with console.status("[bold blue]Inviting tester...[/bold blue]"), get_client(ctx) as client:
+    with progress(ctx, "[bold blue]Inviting tester...[/bold blue]"), get_client(ctx) as client:
         tester = client.invite_beta_tester(
             email=email,
             group_id=group_id,
@@ -319,5 +305,7 @@ def testflight_invite(
     if config.output.format == "json":
         typer.echo(json.dumps(tester, indent=2, default=str))
     else:
-        console.print(f"[green]Invited {email} to group {group_id}.[/green]")
+        console.print(
+            f"Added {email} to group {group_id}. Apple controls invitation delivery.", markup=False
+        )
         console.print(f"  Tester ID: {tester.get('id', '')}")

@@ -31,7 +31,7 @@ slowlane asc testflight testers
 slowlane asc testflight testers --app APP_RESOURCE_ID --limit 50
 ```
 
-Invite a tester to a beta group. The email address is positional, and `--group` expects the group's App Store Connect resource ID:
+Invite a tester to an **external** beta group. Internal groups are unsupported by this command. The email address is positional, and `--group` expects the group's App Store Connect resource ID:
 
 ```bash
 slowlane asc testflight invite new.tester@example.com \
@@ -39,6 +39,8 @@ slowlane asc testflight invite new.tester@example.com \
   --first-name Taylor \
   --last-name Example
 ```
+
+Slowlane reuses an existing tester when found and ensures membership in the requested group. Apple controls invitation delivery according to build readiness and notification settings; successful membership does not guarantee that an email has been sent.
 
 ## TestFlight groups
 

@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-18
+
+This is a breaking upgrade from 0.3.x. Read the [migration guide](https://demoen.github.io/slowlane/migration/) before updating automation. Slowlane remains beta. Automated tests pass on Windows, Linux, and macOS; live Apple-account operations and signed macOS uploads have not been verified for this release.
+
+### Added
+- Public App Store Connect API certificate and provisioning-profile operations, including downloads and `signing devices list`.
+- Explicit team and individual API-key configuration through `auth.key_type` and `ASC_KEY_TYPE`.
+- `slowlane doctor` for local configuration, key, and tooling checks, with a read-only `--online` authentication probe.
+- Migration, troubleshooting, and manual Apple-account/macOS release-verification guides.
+
+### Changed
+- Refreshed Python dependencies and pinned CI actions, including Rich 15, Typer 0.27.2, mypy 2.3, Ruff 0.16, and Poetry 2.4.3; adapted CLI error handling to Typer's public exceptions.
+- Batched routine Dependabot updates monthly with one PR per ecosystem and a seven-day cooldown; configured separate security-update groups.
+- Moved documentation to Zensical with a custom animated shell homepage, the original snail mascot, responsive layouts, and reduced-motion support.
+- Signing requires a team API key, and profile creation requires an explicit `--cert`; signing JSON uses public API resource shapes.
+- Uploads require macOS and a team API key. Transporter is preferred; altool is limited to iOS IPA and macOS PKG artifacts. Upload acceptance is reported separately from processing completion.
+- Standardized operational JSON output and require `--force` for destructive commands without an interactive terminal.
+- Environment credentials override configuration; empty or invalid explicit values fail instead of falling back to stored credentials.
+- Upgraded cryptography to 50.0.1 or newer for security fixes. Apple Silicon is now required on macOS; Intel macOS and 32-bit Windows are unsupported by the dependency.
+- Documentation deployment now uses official GitHub Pages artifacts and requires Pages to use GitHub Actions as its source.
+- Added Windows, Linux, and macOS test jobs and raised the branch-coverage requirement to 80%.
+
+### Fixed
+- Corrected build-number and TestFlight tester fields. Invitations reuse existing testers and add group membership without claiming immediate email delivery.
+- Validate signing requests, CSRs, relationships, response shapes, and downloads; follow pagination when resolving resources.
+- Refresh JWTs for requests, enforce trusted API hosts, disable redirects, and bound read retries without automatically retrying writes.
+- Replace response-body logging with sanitized diagnostics and safely quote generated CI configuration without exposing private keys.
+- Validate explicit upload-tool overrides, respect the selected Xcode installation, align IPA/PKG validation flags, and clean up subprocesses and temporary credentials on failure.
+
+### Removed
+- Private Developer Portal endpoints, Apple ID browser authentication, saved-session integration, and the interactive dependency extra.
+- `spaceauth`, `--team-id`, `--include-session`, certificate auto-selection, and obsolete session/Developer Portal configuration.
+- Unused Transporter lookup functionality and the direct Click runtime dependency. Existing stored Apple ID session data is left untouched.
+
 ## [0.3.0] - 2026-08-02
 
 ### Added

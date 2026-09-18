@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 from enum import StrEnum
 from typing import cast
 
 import typer
 from rich.console import Console
 
-from slowlane.auth.session_auth import get_session_auth
 from slowlane.core.config import SlowlaneConfig
-from slowlane.core.secrets import SecretStore
 
 app = typer.Typer(
     name="env",
@@ -62,11 +61,6 @@ def env_print(
         help="CI platform: github, gitlab, azure, generic",
         case_sensitive=False,
     ),
-    include_session: bool = typer.Option(
-        False,
-        "--include-session",
-        help="Include FASTLANE_SESSION if available",
-    ),
 ) -> None:
     """Print environment export commands for CI.
 
@@ -82,21 +76,21 @@ def env_print(
         env_vars["ASC_KEY_ID"] = config.auth.key_id
     if config.auth.issuer_id:
         env_vars["ASC_ISSUER_ID"] = config.auth.issuer_id
-    if config.auth.key_id and config.auth.issuer_id:
+    if config.auth.key_id:
+        env_vars["ASC_KEY_TYPE"] = config.auth.key_type
         if config.output.format == "json":
-            if config.auth.private_key_path:
+            if config.auth.private_key_path and "ASC_PRIVATE_KEY" not in os.environ:
                 env_vars["ASC_PRIVATE_KEY_PATH"] = config.auth.private_key_path
             else:
                 env_vars["ASC_PRIVATE_KEY"] = _REQUIRED_VALUE
-        elif ci_platform is CIPlatform.GENERIC and config.auth.private_key_path:
+        elif (
+            ci_platform is CIPlatform.GENERIC
+            and config.auth.private_key_path
+            and "ASC_PRIVATE_KEY" not in os.environ
+        ):
             env_vars["ASC_PRIVATE_KEY_PATH"] = config.auth.private_key_path
         else:
             env_vars["ASC_PRIVATE_KEY"] = ""
-
-    if include_session:
-        session = get_session_auth(secret_store=SecretStore())
-        if session:
-            env_vars["FASTLANE_SESSION"] = session.to_export_string()
 
     if not env_vars:
         if config.output.format == "json":
@@ -118,17 +112,17 @@ def env_print(
     else:
         output = _generate_generic(env_vars)
 
-    console.print(output, markup=False, highlight=False)
+    typer.echo(output)
 
 
 def _generate_github_actions(env_vars: dict[str, str]) -> str:
     """Generate GitHub Actions env format."""
     lines = ["env:"]
     for key, value in env_vars.items():
-        if key in ("ASC_PRIVATE_KEY", "FASTLANE_SESSION"):
+        if key == "ASC_PRIVATE_KEY":
             lines.append(f"  {key}: ${{{{ secrets.{key} }}}}")
         else:
-            lines.append(f"  {key}: {value}")
+            lines.append(f"  {key}: {json.dumps(value)}")
     return "\n".join(lines)
 
 
@@ -136,23 +130,21 @@ def _generate_gitlab_ci(env_vars: dict[str, str]) -> str:
     """Generate GitLab CI variables format."""
     lines = ["variables:"]
     for key, value in env_vars.items():
-        if key in ("ASC_PRIVATE_KEY", "FASTLANE_SESSION"):
+        if key == "ASC_PRIVATE_KEY":
             lines.append(f"  {key}: ${key}")
         else:
-            lines.append(f'  {key}: "{value}"')
+            lines.append(f"  {key}: {json.dumps(value)}")
     return "\n".join(lines)
 
 
 def _generate_azure_devops(env_vars: dict[str, str]) -> str:
     """Generate Azure DevOps format."""
-    lines = ["variables:"]
+    lines = ["env:"]
     for key, value in env_vars.items():
-        if key in ("ASC_PRIVATE_KEY", "FASTLANE_SESSION"):
-            lines.append(f"  - name: {key}")
-            lines.append(f"    value: $({key})")
+        if key == "ASC_PRIVATE_KEY":
+            lines.append(f"  {key}: $({key})")
         else:
-            lines.append(f"  - name: {key}")
-            lines.append(f'    value: "{value}"')
+            lines.append(f"  {key}: {json.dumps(value)}")
     return "\n".join(lines)
 
 
@@ -224,10 +216,11 @@ jobs:
 
 1. Go to your project Settings > CI/CD > Variables
 
-2. Add these protected/masked variables:
+2. Add these protected variables:
    - ASC_KEY_ID
    - ASC_ISSUER_ID
-   - ASC_PRIVATE_KEY
+   - ASC_PRIVATE_KEY_PATH: File type, containing the complete .p8 key with a trailing newline.
+     Multiline PEM values cannot be masked; do not print this variable's file contents.
 
 3. Configure a macOS runner with Xcode or Transporter installed.
 
@@ -241,10 +234,6 @@ deploy:
   script:
     - python3.14 -m pip install slowlane
     - slowlane upload ipa ./App.ipa
-  variables:
-    ASC_KEY_ID: $ASC_KEY_ID
-    ASC_ISSUER_ID: $ASC_ISSUER_ID
-    ASC_PRIVATE_KEY: $ASC_PRIVATE_KEY
 ```
 """
     else:
@@ -286,4 +275,9 @@ steps:
       ASC_PRIVATE_KEY: $(ASC_PRIVATE_KEY)
 ```
 """
-    console.print(instructions)
+    if get_config(ctx).output.format == "json":
+        typer.echo(
+            json.dumps({"platform": ci_platform.value, "instructions": instructions.strip()})
+        )
+    else:
+        console.print(instructions, markup=False, highlight=False)

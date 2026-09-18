@@ -9,7 +9,6 @@ import sys
 import traceback
 from pathlib import Path
 
-import click
 import typer
 from rich.console import Console
 from rich.logging import RichHandler
@@ -18,19 +17,17 @@ from slowlane import __version__
 from slowlane.cli.asc import app as asc_app
 from slowlane.cli.env import app as env_app
 from slowlane.cli.signing import app as signing_app
-from slowlane.cli.spaceauth import app as spaceauth_app
 from slowlane.cli.upload import app as upload_app
 from slowlane.core.config import SlowlaneConfig
 from slowlane.core.errors import ExitCode, SlowlaneError
 
 app = typer.Typer(
     name="slowlane",
-    help="Command-line automation for App Store Connect and the Apple Developer Portal.",
+    help="Command-line automation through Apple's App Store Connect API.",
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
 
-app.add_typer(spaceauth_app, name="spaceauth", help="Session authentication commands")
 app.add_typer(asc_app, name="asc", help="App Store Connect operations")
 app.add_typer(signing_app, name="signing", help="Certificates and provisioning profiles")
 app.add_typer(upload_app, name="upload", help="Upload IPA/pkg files")
@@ -43,12 +40,17 @@ _effective_json_output = False
 
 def _version_callback(value: bool) -> None:
     if value:
-        typer.echo(f"slowlane version {__version__}")
+        if _json_requested():
+            typer.echo(json.dumps({"version": __version__}))
+        else:
+            typer.echo(f"slowlane version {__version__}")
         raise typer.Exit()
 
 
 def setup_logging(verbose: bool, json_output: bool) -> None:
     """Configure logging based on options."""
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     if json_output:
         logging.basicConfig(
             level=logging.CRITICAL + 1,
@@ -131,9 +133,13 @@ def _preload_json_output() -> bool:
 
     try:
         config = SlowlaneConfig.load(_root_config_path())
-        config.apply_env_overrides()
     except SlowlaneError:
         return requested
+    configured_json = config.output.format == "json"
+    try:
+        config.apply_env_overrides()
+    except SlowlaneError:
+        return configured_json
     return config.output.format == "json"
 
 
@@ -158,7 +164,7 @@ def _emit_error(error_type: str, message: str, exit_code: int, json_output: bool
 
 
 def _print_traceback(error: BaseException, json_output: bool) -> None:
-    if not json_output and _debug_requested():
+    if not isinstance(error, SlowlaneError) and not json_output and _debug_requested():
         traceback.print_exception(type(error), error, error.__traceback__, file=sys.stderr)
 
 
@@ -196,6 +202,7 @@ def main(
 
     config_file = Path(config_path) if config_path else None
     config = SlowlaneConfig.load(config_file)
+    _effective_json_output = json_output or config.output.format == "json"
     config.apply_env_overrides()
 
     if json_output:
@@ -212,9 +219,56 @@ def main(
 
 
 @app.command()
-def version() -> None:
+def version(ctx: typer.Context) -> None:
     """Show version information."""
-    console.print(f"slowlane version {__version__}")
+    if ctx.obj["config"].output.format == "json":
+        typer.echo(json.dumps({"version": __version__}))
+    else:
+        console.print(f"slowlane version {__version__}")
+
+
+@app.command()
+def doctor(
+    ctx: typer.Context,
+    online: bool = typer.Option(
+        False, "--online", help="Check API authentication with a read-only request"
+    ),
+) -> None:
+    """Check API credentials and local upload tooling."""
+    from slowlane.auth.jwt_auth import get_jwt_auth
+    from slowlane.cli.asc import get_client
+    from slowlane.core.secrets import SecretStore
+    from slowlane.transporter.wrapper import find_transporter
+
+    config = ctx.obj["config"]
+    auth = get_jwt_auth(config)
+    if auth is None and config.auth.key_id:
+        auth = get_jwt_auth(config, SecretStore())
+    if auth is not None:
+        auth.get_token()
+    transporter = find_transporter() if sys.platform == "darwin" else None
+    result = {
+        "configuration": "valid",
+        "authentication": "valid_local_key" if auth else "not_configured",
+        "key_type": auth.key_type if auth else config.auth.key_type,
+        "uploads": "available" if transporter else "unavailable",
+        "transporter": str(transporter) if transporter else None,
+        "online": "not_checked",
+    }
+    if online:
+        with get_client(ctx) as client:
+            client.list_apps(limit=1)
+        result["online"] = "authenticated"
+    if config.output.format == "json":
+        typer.echo(json.dumps(result))
+    else:
+        console.print("[bold]Slowlane diagnostics[/bold]")
+        for name, value in result.items():
+            console.print(f"{name}: {value or '-'}", markup=False)
+        if not transporter:
+            console.print(
+                "Uploads require macOS with Xcode or Transporter; API commands work on every supported OS."
+            )
 
 
 def run() -> None:
@@ -232,13 +286,13 @@ def run() -> None:
         _emit_error(type(e).__name__, str(e), exit_code, _effective_json_output)
         _print_traceback(e, _effective_json_output)
         sys.exit(exit_code)
-    except click.ClickException as e:
+    except typer.TyperException as e:
         message = e.format_message()
         if message:
-            error_type = "UsageError" if isinstance(e, click.UsageError) else type(e).__name__
+            error_type = "UsageError" if e.exit_code == 2 else type(e).__name__
             _emit_error(error_type, message, e.exit_code, _effective_json_output)
         sys.exit(e.exit_code)
-    except (click.Abort, KeyboardInterrupt) as e:
+    except (typer.Abort, KeyboardInterrupt) as e:
         _emit_error("KeyboardInterrupt", "Interrupted", 130, _effective_json_output)
         _print_traceback(e, _effective_json_output)
         sys.exit(130)

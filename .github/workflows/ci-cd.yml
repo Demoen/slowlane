@@ -27,20 +27,20 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Poetry
-        run: python -m pip install "poetry==2.4.1"
+        run: python -m pip install "poetry==2.4.3"
 
       - name: Install project
-        run: poetry install --no-interaction --all-extras
+        run: poetry install --no-interaction
 
       - name: Run tests
         run: poetry run pytest tests/ --tb=short -q --no-cov
@@ -50,20 +50,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Poetry
-        run: python -m pip install "poetry==2.4.1"
+        run: python -m pip install "poetry==2.4.3"
 
       - name: Install project
-        run: poetry install --no-interaction --all-extras
+        run: poetry install --no-interaction
 
       - name: Validate project metadata and lock file
         run: poetry check --lock
@@ -83,26 +83,26 @@ jobs:
     needs: test
 
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Poetry
-        run: python -m pip install "poetry==2.4.1"
+        run: python -m pip install "poetry==2.4.3"
 
       - name: Install project
-        run: poetry install --no-interaction --all-extras
+        run: poetry install --no-interaction
 
       - name: Run tests with coverage
         run: poetry run pytest tests/ --cov=src/slowlane --cov-report=xml --cov-report=term-missing --no-cov-on-fail
 
       - name: Upload coverage
-        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
@@ -113,20 +113,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Poetry
-        run: python -m pip install "poetry==2.4.1"
+        run: python -m pip install "poetry==2.4.3"
 
       - name: Install project and security tools
-        run: poetry install --no-interaction --all-extras --with security
+        run: poetry install --no-interaction --with security
 
       - name: Run Bandit
         run: poetry run bandit -r src/ -ll -ii
@@ -139,23 +139,32 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Poetry
-        run: python -m pip install "poetry==2.4.1"
+        run: python -m pip install "poetry==2.4.3"
 
       - name: Install documentation dependencies
         run: poetry install --no-interaction --with docs
 
       - name: Build documentation
-        run: poetry run mkdocs build --strict
+        run: poetry run zensical build --clean --strict
+
+      - name: Check documentation links and assets
+        run: poetry run python scripts/check_docs.py
+
+      - name: Upload documentation artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site/
 
   package:
     name: Package
@@ -163,17 +172,17 @@ jobs:
     needs: [lint, coverage, security, docs]
 
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Poetry
-        run: python -m pip install "poetry==2.4.1"
+        run: python -m pip install "poetry==2.4.3"
 
       - name: Install release tools
         run: poetry install --no-interaction --with release
@@ -191,7 +200,7 @@ jobs:
           .package-smoke/bin/slowlane version
 
       - name: Upload distributions
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist-${{ github.sha }}-${{ github.run_attempt }}
           path: dist/
@@ -206,33 +215,17 @@ jobs:
       github.event_name == 'push' &&
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     permissions:
-      contents: write # Required to publish the GitHub Pages branch.
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install Poetry
-        run: python -m pip install "poetry==2.4.1"
-
-      - name: Install documentation dependencies
-        run: poetry install --no-interaction --with docs
-
-      - name: Configure Git credentials
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh auth setup-git
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
       - name: Deploy documentation
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: poetry run mkdocs gh-deploy --force
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

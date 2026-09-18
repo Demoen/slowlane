@@ -1,183 +1,95 @@
-# Slowlane
+# Slowlane 🐌
+
+**Apple automation. At your pace.**
 
 [![CI/CD](https://github.com/Demoen/slowlane/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/Demoen/slowlane/actions/workflows/ci-cd.yml)
-[![PyPI version](https://badge.fury.io/py/slowlane.svg)](https://pypi.org/project/slowlane/)
-[![PyPI Downloads](https://static.pepy.tech/personalized-badge/slowlane?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/slowlane)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](https://github.com/Demoen/slowlane/blob/main/LICENSE)
-[![Code style: Ruff](https://img.shields.io/badge/code%20style-Ruff-261230.svg)](https://docs.astral.sh/ruff/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 
-Slowlane is a Python command-line application for automating selected App Store Connect and Apple Developer Portal workflows. App Store Connect REST and upload commands use API-key authentication; Developer Portal signing commands use an Apple ID session. The CLI also provides structured JSON output and CI environment helpers.
+A focused Python CLI for App Store Connect, TestFlight, certificates, provisioning profiles, and macOS uploads. Public Apple APIs, explicit signing choices, and JSON output for your automation.
 
-[Documentation](https://demoen.github.io/slowlane/) | [Installation](https://demoen.github.io/slowlane/installation/) | [CLI reference](https://demoen.github.io/slowlane/cli/) | [Changelog](https://github.com/Demoen/slowlane/blob/main/CHANGELOG.md)
+[Documentation](https://demoen.github.io/slowlane/) · [Get started](https://demoen.github.io/slowlane/installation/) · [CLI reference](https://demoen.github.io/slowlane/cli/) · [Migration guide](https://demoen.github.io/slowlane/migration/)
 
-## Capabilities
+## What it does
 
-| Area | Supported operations |
-| --- | --- |
-| Authentication | API keys for App Store Connect; interactive Apple ID sessions for Developer Portal commands |
-| Apps and builds | List apps, inspect an app, list builds, and find the latest build |
-| TestFlight | List testers and groups, and invite a tester to a group |
-| Code signing | List, create, and revoke certificates; list, create, and delete provisioning profiles |
-| Uploads | Validate and upload IPA and PKG files with Apple Transporter |
-| Automation | JSON output and environment helpers for common CI providers |
+| Workflow | Operations | Requirements |
+| --- | --- | --- |
+| Apps and builds | List apps, inspect metadata, list builds, find the latest build | Eligible API key |
+| TestFlight | List testers/groups and invite a tester to a group | Eligible API key and role |
+| Signing | List/create/download/revoke certificates; list/create/download/delete profiles; list devices | Team API key with signing access |
+| Uploads | Validate/upload IPA and upload PKG artifacts | macOS, team API key, Apple tooling |
+| Automation | JSON results, local/online diagnostics, CI environment templates | Python 3.14+ |
 
-Developer Portal commands use Apple's private web-service endpoints and can require updates when Apple changes those services. Upload commands require Apple tooling that is normally available only on macOS.
+REST commands run on macOS, Linux, and Windows. Uploads require macOS. Individual API keys support eligible REST operations; signing and uploads require team keys.
 
-## Requirements
+Supported targets: Apple Silicon macOS, x64 Linux, and x64 Windows. Intel macOS and 32-bit Windows are unsupported by the current cryptography dependency.
 
-- Python 3.14 or newer
-- An App Store Connect API key for REST API and upload workflows
-- Chromium for interactive Apple ID login
-- Xcode or the Transporter app on macOS for IPA and PKG uploads
+Slowlane does not build applications, sign artifacts, notarize packages, or submit apps for review.
 
-## Installation
-
-Install the base package for API-key and pre-existing session workflows:
+## Install and connect
 
 ```bash
 python -m pip install slowlane
-```
 
-Install the interactive-login extra and its Chromium browser:
-
-```bash
-python -m pip install "slowlane[interactive]"
-python -m playwright install chromium
-```
-
-Verify the installation:
-
-```bash
-slowlane version
-```
-
-## Quick start
-
-### App Store Connect API key
-
-Create an API key in App Store Connect, then provide its key ID, issuer ID, and private key:
-
-```bash
+export ASC_KEY_TYPE="team"
 export ASC_KEY_ID="XXXXXXXXXX"
 export ASC_ISSUER_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 export ASC_PRIVATE_KEY_PATH="/absolute/path/to/AuthKey_XXXXXXXXXX.p8"
 
+slowlane doctor
+slowlane doctor --online
 slowlane asc apps list
-slowlane asc builds list --app APP_RESOURCE_ID
+slowlane --json asc builds list --app APP_RESOURCE_ID
 ```
 
-Use `ASC_PRIVATE_KEY` instead of `ASC_PRIVATE_KEY_PATH` when the private-key contents are supplied directly by a secret manager.
+For secret managers, use `ASC_PRIVATE_KEY` for private-key contents instead of a key-file path. For individual keys, explicitly set `ASC_KEY_TYPE=individual` and remove issuer settings. See [authentication](https://demoen.github.io/slowlane/authentication/).
 
-### Interactive Apple ID session
-
-Interactive login is required for Developer Portal signing operations:
+## Sign with intention
 
 ```bash
-slowlane spaceauth login --service developer --email developer@example.com
-slowlane spaceauth verify --email developer@example.com
-slowlane spaceauth export --email developer@example.com
+slowlane signing certs list
+slowlane signing devices list
+slowlane signing profiles create \
+  --name "App Store com.example.app" \
+  --type appstore \
+  --bundle-id com.example.app \
+  --cert CERT_ID
+slowlane signing profiles download PROFILE_ID --output ./App.mobileprovision
 ```
 
-Store the exported value as the `FASTLANE_SESSION` secret in CI. Treat it as a credential.
+Profile creation requires an explicit certificate ID. You retain its matching private key. Downloads refuse to overwrite existing files. Use Xcode or your signing pipeline to consume the downloaded resources.
 
-### JSON output
-
-The global `--json` option must precede the command:
+## Upload on macOS
 
 ```bash
-slowlane --json asc apps list
+slowlane upload ipa ./App.ipa --validate-only
+slowlane upload ipa ./App.ipa
+slowlane upload pkg ./App.pkg
 ```
 
-## Command overview
+Install current Xcode or Apple Transporter tooling. A successful transfer is separate from App Store Connect processing; inspect the build afterward.
 
-| Command | Purpose |
-| --- | --- |
-| `slowlane spaceauth login --service developer --email EMAIL` | Open an interactive Apple ID login and store the resulting session |
-| `slowlane spaceauth export --email EMAIL` | Export a stored session for CI |
-| `slowlane spaceauth verify --email EMAIL` | Verify a stored session against Apple services |
-| `slowlane spaceauth doctor` | Inspect local authentication configuration |
-| `slowlane asc apps list` | List apps |
-| `slowlane asc apps get APP_ID_OR_BUNDLE_ID` | Get an app by resource ID or bundle ID |
-| `slowlane asc builds list --app APP_ID` | List builds for an app |
-| `slowlane asc builds latest APP_ID` | Get the latest build for an app |
-| `slowlane asc testflight testers --app APP_ID` | List TestFlight testers |
-| `slowlane asc testflight groups --app APP_ID` | List TestFlight groups |
-| `slowlane asc testflight invite EMAIL --group GROUP_ID` | Invite a tester to a group |
-| `slowlane signing certs list` | List signing certificates |
-| `slowlane signing certs create --type TYPE --csr PATH` | Create a signing certificate from an existing CSR |
-| `slowlane signing certs revoke CERT_ID` | Revoke a signing certificate |
-| `slowlane signing profiles list` | List provisioning profiles |
-| `slowlane signing profiles create --name NAME --type TYPE --bundle-id BUNDLE_ID [--device DEVICE_ID]` | Create a provisioning profile |
-| `slowlane signing profiles delete PROFILE_ID` | Delete a provisioning profile |
-| `slowlane upload ipa PATH` | Validate and upload an IPA |
-| `slowlane upload pkg PATH` | Upload a macOS PKG |
-| `slowlane env print --platform PLATFORM` | Print CI environment configuration |
+## Upgrading from 0.3 to 0.4
 
-Run `slowlane COMMAND --help` for complete options and examples.
+Apple ID browser login, saved sessions, `spaceauth`, `FASTLANE_SESSION` integration, and private Developer Portal endpoints have been removed. Signing uses the public App Store Connect API and a team key. Remove `[devportal]`, `auth.default_mode`, `--team-id`, and the interactive installation extra from existing configuration and scripts.
 
-## Configuration
-
-Slowlane reads TOML configuration from:
-
-- Linux and macOS: `~/.config/slowlane/config.toml`, or `$XDG_CONFIG_HOME/slowlane/config.toml`
-- Windows: `%APPDATA%\slowlane\config.toml`
-
-```toml
-[auth]
-key_id = "XXXXXXXXXX"
-issuer_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-private_key_path = "/absolute/path/to/AuthKey_XXXXXXXXXX.p8"
-
-[http]
-timeout = 30
-max_retries = 3
-backoff_factor = 0.5
-
-[output]
-format = "text"
-verbose = false
-
-[devportal]
-team_id = "TEAM_ID"
-```
-
-Environment variables override file-based authentication and output settings:
-
-| Variable | Purpose |
-| --- | --- |
-| `ASC_KEY_ID` | App Store Connect API key ID |
-| `ASC_ISSUER_ID` | App Store Connect issuer ID |
-| `ASC_PRIVATE_KEY` | Private-key contents |
-| `ASC_PRIVATE_KEY_PATH` | Path to a `.p8` private-key file |
-| `FASTLANE_SESSION` | Exported Slowlane session data |
-| `SLOWLANE_JSON` | Set to `1` or `true` for JSON output |
-| `SLOWLANE_VERBOSE` | Set to `1` or `true` for verbose logging |
-
-See the [configuration reference](https://demoen.github.io/slowlane/configuration/) for details.
-
-## Security
-
-- Never commit API private keys or exported session values.
-- Store credentials in the operating-system keychain or your CI provider's secret store.
-- Use narrowly scoped App Store Connect roles and rotate credentials regularly.
-- Review the [security policy](https://github.com/Demoen/slowlane/blob/main/SECURITY.md) before reporting a vulnerability.
+Saved session data is left untouched; the new release does not read it or revoke it at Apple. Follow the [migration guide](https://demoen.github.io/slowlane/migration/) before updating automation.
 
 ## Development
 
 ```bash
-poetry install --all-extras --with docs,release,security
+poetry install --with docs,release,security
 poetry run ruff check src tests
 poetry run ruff format --check src tests
 poetry run mypy src/slowlane
 poetry run pytest
-poetry run mkdocs build --strict
+poetry run zensical build --clean --strict
 ```
 
-See the [contribution guide](https://github.com/Demoen/slowlane/blob/main/CONTRIBUTING.md) for the contribution workflow.
+Preview the Zensical documentation with `poetry run zensical serve`. The snail stays.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md), the [release verification checklist](https://demoen.github.io/slowlane/release-verification/), and [SECURITY.md](SECURITY.md). Live Apple-account and macOS upload validation are separate release checks.
 
 ## License
 
-Slowlane is available under the [MIT License](https://github.com/Demoen/slowlane/blob/main/LICENSE).
-
-Apple, App Store Connect, TestFlight, Xcode, and Transporter are trademarks of Apple Inc. Slowlane is an independent project and is not affiliated with or endorsed by Apple Inc.
+[MIT](LICENSE). Slowlane is an independent project, not affiliated with or endorsed by Apple Inc. Apple, App Store Connect, TestFlight, Xcode, and Transporter are trademarks of Apple Inc.

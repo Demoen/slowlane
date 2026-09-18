@@ -1,7 +1,7 @@
 [project]
 name = "slowlane"
-version = "0.3.0"
-description = "Command-line automation for App Store Connect and the Apple Developer Portal"
+version = "0.4.0"
+description = "Command-line automation for App Store Connect, signing, and uploads"
 authors = [{name = "Slowlane Contributors"}]
 license = "MIT"
 readme = "README.md"
@@ -18,20 +18,16 @@ classifiers = [
     "Topic :: Software Development :: Build Tools",
 ]
 dependencies = [
-    "click>=8.3.3,<9.0.0",
-    "cryptography>=48.0.1,<49.0.0",
+    "cryptography>=50.0.1,<51.0.0",
     "httpx>=0.28.1,<0.29.0",
     "idna>=3.15,<4.0",
     "keyring>=25.7.0,<26.0.0",
     "pygments>=2.20.0,<3.0.0",
     "pyjwt>=2.13.0,<3.0.0",
-    "rich>=14.3.1,<15.0.0",
+    "rich>=15.0.0,<16.0.0",
     "tomli-w>=1.2.0,<2.0.0",
-    "typer>=0.21.1,<0.25.0",
+    "typer>=0.27.2,<0.28.0",
 ]
-
-[project.optional-dependencies]
-interactive = ["playwright>=1.58.0,<2.0.0"]
 
 [project.urls]
 Homepage = "https://github.com/Demoen/slowlane"
@@ -48,17 +44,16 @@ packages = [{include = "slowlane", from = "src"}]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.2"
-pytest-asyncio = "^1.3.0"
+pyyaml = "^6.0.3"
 pytest-cov = "^7.0.0"
-vcrpy = "^8.2.1"
-mypy = "^1.19.1"
-ruff = ">=0.14.14,<0.16.0"
+mypy = "^2.3.1"
+ruff = ">=0.16.8,<0.17.0"
 
 [tool.poetry.group.docs]
 optional = true
 
 [tool.poetry.group.docs.dependencies]
-mkdocs-material = "^9.7.7"
+zensical = "==0.0.62"
 
 [tool.poetry.group.release]
 optional = true
@@ -93,13 +88,12 @@ warn_unused_ignores = true
 disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
-module = ["keyring.*", "playwright.*"]
+module = ["keyring.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "--cov=src/slowlane --cov-report=term-missing --cov-report=html --cov-fail-under=65"
+addopts = "--cov=src/slowlane --cov-report=term-missing --cov-report=html --cov-fail-under=80"
 
 [tool.coverage.run]
 source = ["src/slowlane"]

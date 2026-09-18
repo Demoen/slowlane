@@ -1,0 +1,89 @@
+[project]
+site_name = "Slowlane"
+site_description = "Apple developer automation. At your pace. Public APIs, explicit signing, and a CLI built for your next release."
+site_url = "https://demoen.github.io/slowlane/"
+repo_url = "https://github.com/Demoen/slowlane"
+repo_name = "Demoen/slowlane"
+edit_uri = "edit/main/docs/"
+docs_dir = "docs"
+site_dir = "site"
+use_directory_urls = true
+extra_css = ["stylesheets/extra.css"]
+nav = [
+  { "Home" = "index.md" },
+  { "Get started" = [
+    { "Installation" = "installation.md" },
+    { "Authentication" = "authentication.md" },
+    { "Migrating from 0.3" = "migration.md" },
+  ] },
+  { "Workflows" = [
+    { "Apps" = "usage/apps.md" },
+    { "Builds and TestFlight" = "usage/builds.md" },
+    { "Certificates" = "usage/certificates.md" },
+    { "Provisioning profiles" = "usage/profiles.md" },
+    { "Devices" = "usage/devices.md" },
+    { "Uploads" = "usage/upload.md" },
+  ] },
+  { "Reference" = [
+    { "CLI" = "cli.md" },
+    { "Configuration" = "configuration.md" },
+    { "Troubleshooting" = "troubleshooting.md" },
+    { "Release verification" = "release-verification.md" },
+  ] },
+]
+
+[project.theme]
+variant = "modern"
+custom_dir = "overrides"
+language = "en"
+logo = "assets/snail.svg"
+favicon = "assets/snail.svg"
+font = false
+features = [
+  "navigation.instant",
+  "navigation.instant.progress",
+  "navigation.tracking",
+  "navigation.tabs",
+  "navigation.sections",
+  "navigation.path",
+  "navigation.top",
+  "search.suggest",
+  "search.highlight",
+  "content.code.copy",
+  "content.action.edit",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "custom"
+accent = "custom"
+toggle = { icon = "material/weather-night", name = "Use dark mode" }
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "custom"
+accent = "custom"
+toggle = { icon = "material/weather-sunny", name = "Use light mode" }
+
+[project.markdown_extensions.admonition]
+[project.markdown_extensions.attr_list]
+[project.markdown_extensions.md_in_html]
+[project.markdown_extensions.pymdownx.details]
+[project.markdown_extensions.pymdownx.superfences]
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = true
+line_spans = "__span"
+pygments_lang_class = true
+[project.markdown_extensions.pymdownx.inlinehilite]
+[project.markdown_extensions.pymdownx.tabbed]
+alternate_style = true
+
+[project.validation]
+invalid_links = true
+invalid_link_anchors = true
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/Demoen/slowlane"

@@ -1,4 +1,4 @@
-"""HTTP client with retries, backoff, and cookie handling."""
+"""HTTP client for authenticated App Store Connect requests."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from .config import HttpConfig
 from .errors import (
     AccessDeniedError,
     AppleFlowChangedError,
+    AppStoreConnectError,
     AuthExpiredError,
     NetworkError,
     RateLimitError,
@@ -69,40 +70,21 @@ class AppleHTTPClient:
     """HTTP client configured for Apple APIs with retry and error handling."""
 
     ASC_API_BASE = "https://api.appstoreconnect.apple.com/v1"
-    APPLE_AUTH_BASE = "https://idmsa.apple.com"
-    DEVELOPER_PORTAL_BASE = "https://developer.apple.com"
-    SESSION_AUTH_HOSTS = frozenset(
-        {
-            "appleid.apple.com",
-            "appstoreconnect.apple.com",
-            "developer.apple.com",
-            "idmsa.apple.com",
-        }
-    )
     RETRYABLE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
     def __init__(
         self,
         config: HttpConfig | None = None,
         jwt_token: str | None = None,
-        cookies: dict[str, str] | None = None,
     ) -> None:
         self._config = config or HttpConfig()
         self._jwt_token = jwt_token
         self._jwt_token_provider: Callable[[], str] | None = None
-        self._cookies = dict(cookies or {})
 
         self._client = httpx.Client(
             timeout=httpx.Timeout(self._config.timeout),
             follow_redirects=False,
         )
-        self._install_session_cookies()
-
-    def _install_session_cookies(self) -> None:
-        self._client.cookies.clear()
-        for hostname in self.SESSION_AUTH_HOSTS:
-            for name, value in self._cookies.items():
-                self._client.cookies.set(name, value, domain=hostname, path="/")
 
     def set_jwt_token(self, token: str) -> None:
         """Set JWT token for authentication."""
@@ -111,11 +93,6 @@ class AppleHTTPClient:
     def set_jwt_token_provider(self, provider: Callable[[], str]) -> None:
         """Refresh the JWT before each request attempt."""
         self._jwt_token_provider = provider
-
-    def set_cookies(self, cookies: dict[str, str]) -> None:
-        """Set cookies for session authentication."""
-        self._cookies = dict(cookies)
-        self._install_session_cookies()
 
     @staticmethod
     def _parse_https_target(url: str) -> tuple[str, str] | None:
@@ -164,56 +141,37 @@ class AppleHTTPClient:
         return headers
 
     def _classify_error(self, response: httpx.Response) -> None:
-        """Classify HTTP errors and raise appropriate exceptions."""
         status = response.status_code
-
+        if status < 400:
+            return
         if status == 401:
             raise AuthExpiredError("Authentication failed or expired", status_code=status)
-
-        if status == 403:
-            try:
-                data = response.json()
-            except Exception as e:
-                logger.debug("Could not parse error body: %s", e)
-            else:
-                errors = data.get("errors", []) if isinstance(data, dict) else []
-                if errors and "authentication" in str(errors).lower():
-                    raise AuthExpiredError("Authentication required", status_code=status)
-                details = [
-                    str(error.get("detail") or error.get("title"))
-                    for error in errors
-                    if isinstance(error, dict) and (error.get("detail") or error.get("title"))
-                ]
-                if details:
-                    raise AccessDeniedError("; ".join(details), status_code=status)
-            raise AccessDeniedError("Access forbidden", status_code=status)
-
         if status == 429:
-            retry_seconds = _parse_retry_after(response.headers.get("Retry-After"))
-            if retry_seconds is None:
-                retry_seconds = 60
-            raise RateLimitError("Rate limit exceeded", retry_after=retry_seconds)
-
+            seconds = _parse_retry_after(response.headers.get("Retry-After"))
+            raise RateLimitError(
+                "Rate limit exceeded", retry_after=seconds if seconds is not None else 60
+            )
         if status >= 500:
             raise NetworkError(f"Server error: {status}", status_code=status)
-
-        if status >= 400:
-            try:
-                data = response.json()
-                errors = data.get("errors", [])
-                if errors:
-                    error_detail = "; ".join(
-                        e.get("detail", e.get("title", str(e))) for e in errors
-                    )
-                    raise AppleFlowChangedError(f"API error: {error_detail}", status_code=status)
-            except AppleFlowChangedError:
-                raise
-            except Exception as e:
-                logger.debug("Could not parse error body: %s", e)
-
-            raise AppleFlowChangedError(
-                f"Apple API request failed with HTTP {status}", status_code=status
-            )
+        try:
+            data = response.json()
+        except ValueError, TypeError, UnicodeError:
+            data = {}
+        errors = data.get("errors", []) if isinstance(data, dict) else []
+        details = []
+        if isinstance(errors, list):
+            for error in errors:
+                if isinstance(error, dict):
+                    detail = error.get("detail") or error.get("title")
+                    if isinstance(detail, str):
+                        details.append(detail)
+        message = "; ".join(details) or f"Apple API request failed with HTTP {status}"
+        if self._jwt_token:
+            message = message.replace(self._jwt_token, "[REDACTED]")
+        message = redact_secrets(message)
+        if status == 403:
+            raise AccessDeniedError(message, status_code=status)
+        raise AppStoreConnectError(message, status_code=status)
 
     def _request_with_retry(
         self,
@@ -223,8 +181,6 @@ class AppleHTTPClient:
     ) -> httpx.Response:
         """Execute request with exponential backoff retry."""
         target = self._parse_https_target(url)
-        if self._cookies and (target is None or target[0] not in self.SESSION_AUTH_HOSTS):
-            raise AppleFlowChangedError("Refusing to send an Apple session to an untrusted URL")
         if self._jwt_token or self._jwt_token_provider:
             trusted_jwt_target = False
             if target is not None:
@@ -252,7 +208,7 @@ class AppleHTTPClient:
                     logger.debug(
                         "Request: %s %s (attempt %d)",
                         method,
-                        url,
+                        url.partition("?")[0],
                         attempt + 1,
                     )
 
@@ -260,17 +216,11 @@ class AppleHTTPClient:
 
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(
-                        "Response: %d %s",
+                        "Response: %d",
                         response.status_code,
-                        redact_secrets(response.text[:200] if response.text else ""),
                     )
 
                 if 300 <= response.status_code < 400:
-                    if self._cookies:
-                        raise AuthExpiredError(
-                            "Authentication redirected; the Apple session may be expired",
-                            status_code=response.status_code,
-                        )
                     raise AppleFlowChangedError(
                         "Apple API returned an unexpected redirect",
                         status_code=response.status_code,
@@ -305,7 +255,7 @@ class AppleHTTPClient:
                 raise
 
             except httpx.TimeoutException as e:
-                last_exception = NetworkError(f"Request timeout: {e}")
+                last_exception = NetworkError("Request timed out")
                 if retryable and attempt < self._config.max_retries:
                     wait_time = self._config.backoff_factor * (2**attempt)
                     logger.warning("Timeout, retrying in %.1f seconds...", wait_time)
@@ -314,7 +264,7 @@ class AppleHTTPClient:
                 raise last_exception from e
 
             except httpx.RequestError as e:
-                last_exception = NetworkError(f"Request failed: {e}")
+                last_exception = NetworkError("Apple API connection failed")
                 if retryable and attempt < self._config.max_retries:
                     wait_time = self._config.backoff_factor * (2**attempt)
                     logger.warning("Network error, retrying in %.1f seconds...", wait_time)

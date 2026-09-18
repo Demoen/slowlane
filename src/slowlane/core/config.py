@@ -38,7 +38,7 @@ def get_data_dir() -> Path:
 class AuthConfig:
     """Authentication configuration."""
 
-    default_mode: str = "jwt"  # "jwt" or "session"
+    key_type: str = "team"
     key_id: str | None = None
     issuer_id: str | None = None
     private_key_path: str | None = None
@@ -78,30 +78,26 @@ class OutputConfig:
 
 
 @dataclass
-class DevPortalConfig:
-    """Developer Portal configuration."""
-
-    team_id: str | None = None
-
-
-@dataclass
 class SlowlaneConfig:
     """Main configuration container."""
 
     auth: AuthConfig = field(default_factory=AuthConfig)
     http: HttpConfig = field(default_factory=HttpConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
-    devportal: DevPortalConfig = field(default_factory=DevPortalConfig)
 
     _path: Path | None = field(default=None, repr=False)
 
     @classmethod
     def load(cls, path: Path | None = None) -> SlowlaneConfig:
         """Load configuration from TOML file."""
+        explicit_path = path is not None
         if path is None:
             path = get_config_dir() / "config.toml"
 
         config = cls(_path=path)
+
+        if explicit_path and not path.exists():
+            raise ConfigError("Configuration file does not exist", path=str(path))
 
         if path.exists():
             try:
@@ -116,9 +112,30 @@ class SlowlaneConfig:
 
     def _apply_dict(self, data: dict[str, Any]) -> None:
         """Apply dictionary values to config."""
+        if "devportal" in data:
+            raise ConfigError(
+                "[devportal] is no longer supported; use a team API key for signing. See the migration guide."
+            )
+        sections: dict[str, AuthConfig | HttpConfig | OutputConfig] = {
+            "auth": self.auth,
+            "http": self.http,
+            "output": self.output,
+        }
+        for name, values in data.items():
+            if name not in sections:
+                raise ConfigError(f"Unknown configuration section: {name}")
+            if not isinstance(values, dict):
+                raise ConfigError(f"{name} must be a TOML table")
+            for key in values:
+                if name == "auth" and key == "default_mode":
+                    raise ConfigError(
+                        "auth.default_mode has been removed; use auth.key_type = 'team' or 'individual'. See the migration guide."
+                    )
+                if key not in sections[name].__dataclass_fields__:
+                    raise ConfigError(f"Unknown configuration option: {name}.{key}")
         if "auth" in data:
             auth = data["auth"]
-            self.auth.default_mode = auth.get("default_mode", self.auth.default_mode)
+            self.auth.key_type = auth.get("key_type", self.auth.key_type)
             self.auth.key_id = auth.get("key_id", self.auth.key_id)
             self.auth.issuer_id = auth.get("issuer_id", self.auth.issuer_id)
             self.auth.private_key_path = auth.get("private_key_path", self.auth.private_key_path)
@@ -134,10 +151,6 @@ class SlowlaneConfig:
             self.output.format = output.get("format", self.output.format)
             self.output.verbose = output.get("verbose", self.output.verbose)
 
-        if "devportal" in data:
-            dp = data["devportal"]
-            self.devportal.team_id = dp.get("team_id", self.devportal.team_id)
-
     def to_dict(self) -> dict[str, Any]:
         """Convert config to dictionary (excludes None values for TOML compatibility)."""
 
@@ -147,7 +160,7 @@ class SlowlaneConfig:
         return {
             "auth": _filter_none(
                 {
-                    "default_mode": self.auth.default_mode,
+                    "key_type": self.auth.key_type,
                     "key_id": self.auth.key_id,
                     "issuer_id": self.auth.issuer_id,
                     "private_key_path": self.auth.private_key_path,
@@ -162,26 +175,20 @@ class SlowlaneConfig:
                 "format": self.output.format,
                 "verbose": self.output.verbose,
             },
-            "devportal": _filter_none(
-                {
-                    "team_id": self.devportal.team_id,
-                }
-            ),
         }
 
     def validate(self) -> None:
-        if self.auth.default_mode not in {"jwt", "session"}:
-            raise ConfigError("auth.default_mode must be 'jwt' or 'session'")
+        if self.auth.key_type not in ("team", "individual"):
+            raise ConfigError("auth.key_type must be 'team' or 'individual'")
         for name, value in (
             ("auth.key_id", self.auth.key_id),
             ("auth.issuer_id", self.auth.issuer_id),
             ("auth.private_key_path", self.auth.private_key_path),
-            ("devportal.team_id", self.devportal.team_id),
         ):
             if value is not None and (not isinstance(value, str) or not value.strip()):
                 raise ConfigError(f"{name} must be a non-empty string")
         self.http.validate()
-        if self.output.format not in {"text", "json"}:
+        if self.output.format not in ("text", "json"):
             raise ConfigError("output.format must be 'text' or 'json'")
         if type(self.output.verbose) is not bool:
             raise ConfigError("output.verbose must be a boolean")
@@ -202,13 +209,14 @@ class SlowlaneConfig:
 
     def apply_env_overrides(self) -> None:
         """Apply environment variable overrides."""
-        # Auth overrides from env
-        if key_id := os.environ.get("ASC_KEY_ID"):
-            self.auth.key_id = key_id
-        if issuer_id := os.environ.get("ASC_ISSUER_ID"):
-            self.auth.issuer_id = issuer_id
-        if private_key_path := os.environ.get("ASC_PRIVATE_KEY_PATH"):
-            self.auth.private_key_path = private_key_path
+        for variable, attribute in (
+            ("ASC_KEY_TYPE", "key_type"),
+            ("ASC_KEY_ID", "key_id"),
+            ("ASC_ISSUER_ID", "issuer_id"),
+            ("ASC_PRIVATE_KEY_PATH", "private_key_path"),
+        ):
+            if variable in os.environ:
+                setattr(self.auth, attribute, os.environ[variable].strip())
 
         # Output overrides
         if os.environ.get("SLOWLANE_JSON", "").lower() in ("1", "true"):
